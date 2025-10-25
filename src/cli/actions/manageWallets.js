@@ -1,4 +1,4 @@
-// src/cli/actions/manageWallets.js
+// src/cli/actions/manageWallets.js (Versi 3.0)
 const blockchain = require('../../services/blockchain');
 const wallet = require('../../services/wallet');
 const prompts = require('../prompts');
@@ -13,8 +13,8 @@ async function handleGenerateWallets() {
   logger.success(`${count} dompet baru telah dibuat dan disimpan.`);
 }
 
-// Fungsi disederhanakan, tidak lagi memerlukan parameter 'custom'
-async function handleFundWallets() {
+// Fungsi disederhanakan, sekarang menerima isTestMode
+async function handleFundWallets(isTestMode = false) {
   const { amount } = await prompts.fundWalletsPrompts(); // 'amount' adalah float string
   const mainSigner = await blockchain.getMainWalletSigner();
   const multiWallets = await wallet.loadMultiWallets(blockchain.getProvider());
@@ -28,23 +28,24 @@ async function handleFundWallets() {
   const totalCost = parseFloat(amount) * multiWalletAddresses.length;
   
   // Konfirmasi
-  const { confirm } = await prompts.confirmActionPrompt(
-    `Anda akan mengirim ${amount} BNB ke ${multiWalletAddresses.length} dompet. Total: ${totalCost.toFixed(5)} BNB. Lanjutkan?`
-  );
+  let confirmationMessage = `Anda akan mengirim ${amount} BNB ke ${multiWalletAddresses.length} dompet. Total: ${totalCost.toFixed(5)} BNB. Lanjutkan?`;
+  if (isTestMode) confirmationMessage = `[TEST MODE] ${confirmationMessage}`;
+  
+  const { confirm } = await prompts.confirmActionPrompt(confirmationMessage);
   if (!confirm) {
     logger.warning('Pendanaan dibatalkan.');
     return;
   }
   
   try {
-    // 'amount' (float string) diteruskan, blockchain.js akan mem-parse-nya
-    await blockchain.fundWallets(mainSigner, multiWalletAddresses, amount); 
+    // Meneruskan isTestMode
+    await blockchain.fundWallets(mainSigner, multiWalletAddresses, amount, isTestMode); 
   } catch (e) {
     logger.error(`Gagal mendanai dompet: ${e.message}`);
   }
 }
 
-async function handleRefundWallets() {
+async function handleRefundWallets(isTestMode = false) {
   const mainSigner = await blockchain.getMainWalletSigner();
   const multiSigners = await blockchain.getMultiWalletSigners();
   
@@ -54,16 +55,18 @@ async function handleRefundWallets() {
   }
   
   // Konfirmasi
-  const { confirm } = await prompts.confirmActionPrompt(
-    `Anda akan mengembalikan SEMUA sisa BNB dari ${multiSigners.length} dompet ke dompet utama ${mainSigner.address}. Lanjutkan?`
-  );
+  let confirmationMessage = `Anda akan mengembalikan SEMUA sisa BNB dari ${multiSigners.length} dompet ke dompet utama ${mainSigner.address}. Lanjutkan?`;
+  if (isTestMode) confirmationMessage = `[TEST MODE] ${confirmationMessage}`;
+  
+  const { confirm } = await prompts.confirmActionPrompt(confirmationMessage);
   if (!confirm) {
     logger.warning('Refund dibatalkan.');
     return;
   }
 
   try {
-    await blockchain.refundWallets(multiSigners, mainSigner.address);
+    // Meneruskan isTestMode
+    await blockchain.refundWallets(multiSigners, mainSigner.address, isTestMode);
   } catch (e) {
     logger.error(`Gagal mengembalikan dana: ${e.message}`);
   }

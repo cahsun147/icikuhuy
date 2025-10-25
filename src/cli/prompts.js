@@ -1,6 +1,23 @@
-// src/cli/prompts.js (Versi 5.0)
+// src/cli/prompts.js (Versi 5.1 - Perbaikan Bug)
 const inquirer = require('inquirer');
 const { LABELS } = require('../utils/config');
+
+// BARU: Prompt Pemilihan Mode Awal
+const initialModePrompt = () => {
+    return inquirer.prompt([
+        {
+            type: 'list',
+            name: 'mode',
+            message: 'Pilih mode aplikasi:',
+            loop: false,
+            choices: [
+                { name: 'Mode UTAMA (BSC Mainnet)', value: 'main' },
+                { name: 'Mode UJI COBA (BSC Testnet)', value: 'test' },
+            ],
+            default: 'main',
+        },
+    ]);
+};
 
 const mainMenu = () => {
   return inquirer.prompt([
@@ -306,19 +323,20 @@ const volumeBotPrompts = () => {
   ]);
 };
 
-const confirmActionPrompt = (message) => {
+const confirmActionPrompt = (message, defaultAnswer = false) => {
   return inquirer.prompt([
     {
       type: 'confirm',
       name: 'confirm',
       message: message || 'Apakah Anda yakin ingin melanjutkan?',
-      default: false,
+      default: defaultAnswer,
     }
   ]);
 };
 
 
 module.exports = {
+  initialModePrompt, // BARU
   mainMenu,
   createTokenPrompts,
   createTokenSubMenu,

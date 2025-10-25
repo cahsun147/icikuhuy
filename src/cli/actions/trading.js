@@ -1,4 +1,4 @@
-// src/cli/actions/trading.js (Versi 3.3)
+// src/cli/actions/trading.js (Versi 3.4)
 const { ethers } = require('ethers');
 const blockchain = require('../../services/blockchain');
 const prompts = require('../prompts');
@@ -7,12 +7,15 @@ const { ABIS, CONTRACT_ADDRESSES } = require('../../utils/config');
 const { loadMultiWallets } = require('../../services/wallet');
 
 // Versi skrip saat ini (dibuat untuk pelacakan)
-const SCRIPT_VERSION = '3.3'; 
+const SCRIPT_VERSION = '3.4'; 
 
 let volumeBotInterval = null;
 let snipeListener = null;
 
-async function handleTrade(action) {
+async function handleTrade(action, isTestMode = false) {
+  // Pastikan provider diinisialisasi
+  blockchain.initProvider(isTestMode);
+  
   // Tambahkan info versi
   logger.info(`Menjalankan handleTrade v${SCRIPT_VERSION}`);
   
@@ -53,9 +56,17 @@ async function handleTrade(action) {
     decimals = await blockchain.getTokenDecimals(tokenAddress);
     let totalTokenBalance = ethers.BigNumber.from('0');
 
-    for (const signer of signers) {
-      const balance = await blockchain.getTokenBalance(tokenAddress, signer.address);
+    // Mengambil saldo semua signer yang dipilih
+    const balancePromises = signers.map(signer => blockchain.getTokenBalance(tokenAddress, signer.address));
+    const balances = await Promise.all(balancePromises);
+    
+    balances.forEach(balance => {
       totalTokenBalance = totalTokenBalance.add(balance);
+    });
+    
+    if (totalTokenBalance.isZero()) {
+        logger.warning('Saldo token yang tersedia di dompet yang dipilih adalah nol. Transaksi dibatalkan.');
+        return;
     }
     
     const totalBalanceDisplay = ethers.utils.formatUnits(totalTokenBalance, decimals);
@@ -71,10 +82,8 @@ async function handleTrade(action) {
     } else {
       // *** PERBAIKAN LOGIKA PRESISI FLOATING-POINT (Kasus Umum) ***
       if (amountChoice === '100') {
-          // Jika 100%, gunakan totalBalanceDisplay string secara langsung (paling aman)
           sellAmountBase = totalBalanceDisplay;
       } else {
-          // Hitung jumlah berdasarkan persentase, lalu potong/trim ke desimal yang benar
           const percentage = parseInt(amountChoice) / 100;
           const calculatedAmount = parseFloat(totalBalanceDisplay) * percentage;
           sellAmountBase = calculatedAmount.toFixed(decimals); 
@@ -114,6 +123,7 @@ async function handleTrade(action) {
   logger.info(` Dompet: ${walletChoice} (${signers.length} dompet)`);
   logger.info(` Custom Gwei: ${tradeOptions.gwei} Gwei`);
   logger.info(` Slippage: ${tradeOptions.slippage}%`);
+  if (isTestMode) logger.warning('MODE UJI COBA AKTIF');
   logger.info('-------------------------');
   
   const { confirm } = await prompts.confirmActionPrompt('Lanjutkan transaksi ini?');
@@ -129,6 +139,9 @@ async function handleTrade(action) {
     let individualAmountInWei = amountInWei;
     let finalFundsInWei = fundsInWei;
 
+    // Menambahkan isTestMode ke opsi trade
+    const finalTradeOptions = { ...tradeOptions, isBot: false, isTestMode }; 
+    
     if (action === 'sell') {
       const currentBalance = await blockchain.getTokenBalance(tokenAddress, signer.address);
       
@@ -171,7 +184,7 @@ async function handleTrade(action) {
         tokenAddress, 
         individualAmountInWei, 
         finalFundsInWei, 
-        { isBot: false, gwei: tradeOptions.gwei, slippage: tradeOptions.slippage }
+        finalTradeOptions
       )
       .then(receipt => logger.success(`[${signer.address}] Transaksi ${action} berhasil: ${receipt.transactionHash}`))
       .catch(e => logger.error(`[${signer.address}] Transaksi ${action} gagal: ${e.message}`));
@@ -195,11 +208,16 @@ async function getContractSymbol(tokenAddress) {
   }
 }
 
-async function handleSnipeToken() {
+async function handleSnipeToken(isTestMode = false) {
+  // Pastikan provider diinisialisasi
+  blockchain.initProvider(isTestMode);
+  
   if (snipeListener) {
     logger.warning('Sniper sudah berjalan. Hentikan dulu jika ingin memulai yang baru.');
     return;
   }
+  
+  if (isTestMode) logger.warning('MODE UJI COBA AKTIF');
   
   const { symbol, buyAmountEth } = await prompts.snipePrompts();
   const fundsInWei = ethers.utils.parseEther(buyAmountEth);
@@ -248,10 +266,11 @@ async function handleSnipeToken() {
         logger.info('Sniper dihentikan. Memulai pembelian...');
         
         // Eksekusi pembelian dengan semua dompet
-        // isBot di-set TRUE karena ini adalah aksi cepat (menggunakan AGGRESSIVE_GAS_PRICE default)
+        // Sniper menggunakan isBot=true agar agresif (Gwei=1.5)
+        const snipeTradeOptions = { isBot: true, gwei: '1.5', slippage: '0', isTestMode }; 
+        
         const buyPromises = multiSigners.map(signer => 
-          // Menggunakan tradeOptions standard/aggressive
-          blockchain.tradeToken('buy', signer, token, '0', fundsInWei, { isBot: true, gwei: '1.5', slippage: '0' })
+          blockchain.tradeToken('buy', signer, token, '0', fundsInWei, snipeTradeOptions)
             .then(receipt => logger.success(`[${signer.address}] SNIPE BERHASIL: ${receipt.transactionHash}`))
             .catch(e => logger.error(`[${signer.address}] SNIPE GAGAL: ${e.message}`))
         );
@@ -268,12 +287,17 @@ async function handleSnipeToken() {
   logger.log('Untuk menghentikan sniper, restart aplikasi ini.');
 }
 
-async function handleVolumeBot() {
+async function handleVolumeBot(isTestMode = false) {
+  // Pastikan provider diinisialisasi
+  blockchain.initProvider(isTestMode);
+  
   if (volumeBotInterval) {
     logger.warning('Volume bot sudah berjalan. Menghentikan bot lama...');
     clearInterval(volumeBotInterval);
     volumeBotInterval = null;
   }
+  
+  if (isTestMode) logger.warning('MODE UJI COBA AKTIF');
 
   const { tokenAddress, buyAmountEth, sellAmountToken, intervalSeconds } = await prompts.volumeBotPrompts();
   const multiSigners = await blockchain.getMultiWalletSigners();
@@ -311,7 +335,7 @@ async function handleVolumeBot() {
       logger.info(`[VolumeBot] Siklus dimulai: Buyer: ${buyerSigner.address}, Seller: ${sellerSigner.address}`);
       
       // Tambahkan parameter TRUE untuk mengaktifkan LOW_GAS_PRICE (0.11 Gwei)
-      const botTradeOptions = { isBot: true, gwei: '0.11', slippage: '1' }; 
+      const botTradeOptions = { isBot: true, gwei: '0.11', slippage: '1', isTestMode }; 
 
       // Cek saldo seller
       const sellerBalance = await blockchain.getTokenBalance(tokenAddress, sellerSigner.address);

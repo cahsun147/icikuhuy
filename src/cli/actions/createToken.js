@@ -1,4 +1,4 @@
-// src/cli/actions/createToken.js
+// src/cli/actions/createToken.js (Versi 3.0)
 const { ethers } = require('ethers');
 const blockchain = require('../../services/blockchain');
 const api = require('../../services/api');
@@ -8,8 +8,9 @@ const { tradeToken } = require('../../services/blockchain');
 
 /**
  * Alur Penuh (Step 1-4 + On-chain Call)
+ * @param {boolean} isTestMode - Apakah menggunakan mode uji coba
  */
-async function handleCreateToken() {
+async function handleCreateToken(isTestMode = false) {
   const signer = await blockchain.getMainWalletSigner();
   logger.info(`Menggunakan alamat kreator: ${signer.address}`);
 
@@ -59,6 +60,7 @@ async function handleCreateToken() {
   logger.info(` Img: ${fullTokenData.imgUrl}`);
   logger.info(` MPC Only: ${fullTokenData.onlyMPC}`);
   logger.info(` Kreator: ${signer.address}`);
+  if (isTestMode) logger.warning('MODE UJI COBA AKTIF');
   logger.info('---------------------------------');
   
   const { confirm } = await prompts.confirmActionPrompt('Lanjutkan membuat token ini?');
@@ -71,7 +73,8 @@ async function handleCreateToken() {
   const { receipt, tokenAddress } = await blockchain.callCreateToken(
     signer,
     createParams.createArg,
-    createParams.signature
+    createParams.signature,
+    isTestMode // Meneruskan isTestMode
   );
 
   if (!tokenAddress) {
@@ -103,11 +106,11 @@ async function handleCreateToken() {
       return;
     }
 
-    // Set isBot = TRUE untuk menggunakan LOW_GAS_PRICE (0.11 Gwei) pada bundle buy
-    const isBot = true; 
+    // Opsi trade untuk bundle buy
+    const bundleTradeOptions = { isBot: true, gwei: '0.11', slippage: '1', isTestMode }; 
     
     const buyPromises = multiSigners.map(signer => 
-      tradeToken('buy', signer, tokenAddress, '0', fundsInWei, isBot)
+      blockchain.tradeToken('buy', signer, tokenAddress, '0', fundsInWei, bundleTradeOptions)
         .catch(e => logger.error(`Gagal buy dari ${signer.address}: ${e.message}`))
     );
         

@@ -1,4 +1,4 @@
-// src/utils/config.js
+// src/utils/config.js (Versi 2.0)
 require('dotenv').config();
 const path = require('path');
 
@@ -6,10 +6,18 @@ const path = require('path');
 
 // Alamat Kontrak dari API-Documents.md
 const CONTRACT_ADDRESSES = {
-  BSC: {
+  // Kontrak di BSC Mainnet
+  BSC_MAINNET: {
     TOKEN_MANAGER_V1: '0xEC4549caDcE5DA21Df6E6422d448034B5233bFbC',
     TOKEN_MANAGER_V2: '0x5c952063c7fc8610FFDB798152D69F0B9550762b',
     TOKEN_MANAGER_HELPER_V3: '0xF251F83e40a78868FcfA3FA4599Dad6494E46034',
+  },
+  // Kontrak di BSC Testnet (gunakan alamat yang sama untuk simulasi)
+  BSC_TESTNET: {
+    // Alamat kontrak Testnet yang sebenarnya HARUS dimasukkan di sini
+    TOKEN_MANAGER_V1: '0xEC4549caDcE5DA21Df6E6422d448034B5233bFbC', // Ganti dengan alamat Testnet jika tersedia
+    TOKEN_MANAGER_V2: '0x5c952063c7fc8610FFDB798152D69F0B9550762b', // Ganti dengan alamat Testnet jika tersedia
+    TOKEN_MANAGER_HELPER_V3: '0xF251F83e40a78868FcfA3FA4599Dad6494E46034', // Ganti dengan alamat Testnet jika tersedia
   }
 };
 
@@ -36,9 +44,12 @@ const WALLETS_FILE_PATH = path.join(__dirname, '../../wallets.json');
 
 module.exports = {
   MAIN_WALLET_PK: process.env.MAIN_WALLET_PRIVATE_KEY,
-  RPC_URL: process.env.BSC_RPC_URL,
-  NETWORK: 'BSC',
-  CONTRACT_ADDRESSES: CONTRACT_ADDRESSES[this.NETWORK] || CONTRACT_ADDRESSES.BSC,
+  // Menggunakan dua variabel RPC yang berbeda di .env
+  RPC_MAINNET_URL: process.env.BSC_MAINNET_RPC_URL,
+  RPC_TESTNET_URL: process.env.BSC_TESTNET_RPC_URL, 
+  NETWORK_MAIN: 'BSC_MAINNET',
+  NETWORK_TEST: 'BSC_TESTNET',
+  CONTRACT_ADDRESSES, // Menyimpan keduanya
   API_ENDPOINTS,
   ABIS,
   WALLETS_FILE_PATH,

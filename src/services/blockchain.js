@@ -1,10 +1,12 @@
-// src/services/blockchain.js (Versi 5.0)
+// src/services/blockchain.js (Versi 5.2)
 const { ethers } = require('ethers');
-const { RPC_URL, ABIS, CONTRACT_ADDRESSES } = require('../utils/config');
+const { CONTRACT_ADDRESSES, ABIS, RPC_MAINNET_URL, RPC_TESTNET_URL } = require('../utils/config');
 const logger = require('../utils/logger');
 const { loadMainWallet, loadMultiWallets } = require('./wallet');
 
 let provider;
+let currentNetwork;
+let currentContracts;
 
 // --- KONSTANTA GAS PRICE TETAP (Hanya untuk Bot/Transfer Massal) ---
 // Gas Price rendah untuk Volume Bot, Fund, Refund, dan Create Token (toleransi waktu lebih besar)
@@ -12,11 +14,40 @@ const LOW_GAS_PRICE = ethers.utils.parseUnits("0.11", "gwei");
 // Batas gas yang diestimasi manual untuk interaksi kontrak
 const DEFAULT_GAS_LIMIT = ethers.BigNumber.from(400000); 
 
+/**
+ * Menginisialisasi Provider berdasarkan mode (Mainnet atau Testnet).
+ * @param {boolean} isTestMode
+ */
+function initProvider(isTestMode) {
+  const rpcUrl = isTestMode ? RPC_TESTNET_URL : RPC_MAINNET_URL;
+  const networkName = isTestMode ? 'BSC_TESTNET' : 'BSC_MAINNET';
+  
+  if (!rpcUrl) {
+    throw new Error(`RPC URL untuk ${networkName} tidak ditemukan di .env`);
+  }
+  
+  if (provider && currentNetwork === networkName) {
+    return; // Sudah diinisialisasi dengan benar
+  }
+
+  provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+  currentNetwork = networkName;
+  currentContracts = CONTRACT_ADDRESSES[networkName];
+  logger.info(`Provider terhubung ke: ${networkName}`);
+}
+
 function getProvider() {
   if (!provider) {
-    provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+    throw new Error('Provider belum diinisialisasi. Panggil initProvider() terlebih dahulu.');
   }
   return provider;
+}
+
+function getCurrentContracts() {
+    if (!currentContracts) {
+        throw new Error('Kontrak belum diinisialisasi. Panggil initProvider() terlebih dahulu.');
+    }
+    return currentContracts;
 }
 
 async function getMainWalletSigner() {
@@ -71,8 +102,9 @@ async function getTokenDecimals(tokenAddress) {
  */
 async function getTokenManagerInfo(tokenAddress) {
   try {
+    const contracts = getCurrentContracts();
     const helperContract = getContract(
-      CONTRACT_ADDRESSES.TOKEN_MANAGER_HELPER_V3,
+      contracts.TOKEN_MANAGER_HELPER_V3,
       ABIS.TOKEN_MANAGER_HELPER_V3,
       getProvider()
     );
@@ -91,14 +123,22 @@ async function getTokenManagerInfo(tokenAddress) {
 
 /**
  * Memanggil createToken di TokenManagerV2 (menggunakan LOW_GAS_PRICE)
+ * @param {boolean} isTestMode - Menentukan apakah akan melakukan dry run.
  */
-async function callCreateToken(signer, createArg, signature) {
+async function callCreateToken(signer, createArg, signature, isTestMode = false) {
   logger.info('Mengirim transaksi createToken ke blockchain...');
+  const contracts = getCurrentContracts();
   const contract = getContract(
-    CONTRACT_ADDRESSES.TOKEN_MANAGER_V2,
+    contracts.TOKEN_MANAGER_V2,
     ABIS.TOKEN_MANAGER_V2,
     signer
   );
+
+  if (isTestMode) {
+    logger.warning('[TEST MODE] Transaksi Create Token disimulasikan. Tidak ada biaya BNB riil yang dikeluarkan.');
+    // Simulasi berhasil dan mengembalikan alamat token fiktif
+    return { receipt: { transactionHash: '0xSIMULATED_CREATE_TOKEN_HASH' }, tokenAddress: '0xSimulatedTokenAddressForTest' };
+  }
   
   try {
     const tx = await contract.createToken(createArg, signature, {
@@ -141,9 +181,16 @@ async function callCreateToken(signer, createArg, signature) {
 
 /**
  * Menggunakan LOW_GAS_PRICE untuk fund/transfer
+ * @param {boolean} isTestMode - Menentukan apakah akan melakukan dry run.
  */
-async function fundWallets(mainSigner, multiWalletAddresses, amountInEth) {
+async function fundWallets(mainSigner, multiWalletAddresses, amountInEth, isTestMode = false) {
   logger.info(`Mengirim ${amountInEth} BNB ke ${multiWalletAddresses.length} dompet...`);
+  
+  if (isTestMode) {
+    logger.warning('[TEST MODE] Transaksi Fund Wallets disimulasikan. Dana tidak ditransfer.');
+    return;
+  }
+
   const amountInWei = ethers.utils.parseEther(amountInEth);
   const promises = multiWalletAddresses.map(address => {
     return mainSigner.sendTransaction({
@@ -159,9 +206,15 @@ async function fundWallets(mainSigner, multiWalletAddresses, amountInEth) {
 
 /**
  * Menggunakan LOW_GAS_PRICE untuk refund
+ * @param {boolean} isTestMode - Menentukan apakah akan melakukan dry run.
  */
-async function refundWallets(multiSigners, mainWalletAddress) {
+async function refundWallets(multiSigners, mainWalletAddress, isTestMode = false) {
   logger.info(`Mengembalikan semua BNB dari ${multiSigners.length} dompet ke ${mainWalletAddress}...`);
+  
+  if (isTestMode) {
+    logger.warning('[TEST MODE] Transaksi Refund disimulasikan. Dana tidak ditransfer.');
+    return;
+  }
   
   const promises = multiSigners.map(async (signer) => {
     try {
@@ -200,7 +253,7 @@ async function refundWallets(multiSigners, mainWalletAddress) {
  * @param {string} tokenAddress - Alamat Token
  * @param {BigNumber} amountInWei - Jumlah token (jual) atau 0
  * @param {BigNumber} fundsInWei - Jumlah BNB (beli) atau 0
- * @param {object} tradeOptions - { isBot: boolean, gwei: string, slippage: string }
+ * @param {object} tradeOptions - { isBot: boolean, gwei: string, slippage: string, isTestMode: boolean }
  */
 async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei = '0', tradeOptions = {}) {
   const info = await getTokenManagerInfo(tokenAddress);
@@ -231,9 +284,8 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
   let tx;
   
   // *** IMPLEMENTASI GAS PRICE BERSYARAT & CUSTOM ***
-  // Jika isBot TRUE, gunakan LOW_GAS_PRICE. Jika FALSE, gunakan custom Gwei dari tradeOptions
   const finalGasPrice = tradeOptions.isBot ? LOW_GAS_PRICE : ethers.utils.parseUnits(tradeOptions.gwei.toString(), "gwei");
-  const minAmountOrFundsSlippage = tradeOptions.slippage;
+  const minAmountOrFundsSlippage = parseFloat(tradeOptions.slippage);
   
   logger.info(`[${signer.address}] Menggunakan Gas Price: ${ethers.utils.formatUnits(finalGasPrice, "gwei")} Gwei`);
 
@@ -243,6 +295,12 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
     gasPrice: finalGasPrice,
   };
   
+  if (tradeOptions.isTestMode) {
+    logger.warning(`[TEST MODE] Transaksi ${action.toUpperCase()} disimulasikan. Tidak ada biaya BNB riil yang dikeluarkan.`);
+    // Simulasi berhasil
+    return { transactionHash: '0xSIMULATED_TRADE_HASH' };
+  }
+
   // Hitung Slippage/minFunds untuk V2 (V1 minAmount/maxFunds di set di handleTrade)
   let minAmountWei = ethers.BigNumber.from(0); 
 
@@ -326,7 +384,9 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
 }
 
 module.exports = {
+  initProvider, // BARU
   getProvider,
+  getCurrentContracts, // BARU
   getMainWalletSigner,
   getMultiWalletSigners,
   getBnbBalance,

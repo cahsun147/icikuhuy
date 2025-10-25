@@ -1,4 +1,4 @@
-// src/cli/main.js
+// src/cli/main.js (Versi 2.1)
 const prompts = require('./prompts');
 const { handleCreateToken } = require('./actions/createToken');
 const { 
@@ -14,46 +14,65 @@ const {
   stopRunningBots
 } = require('./actions/trading');
 const logger = require('../utils/logger');
-const { MAIN_WALLET_PK, RPC_URL } = require('../utils/config');
+const { MAIN_WALLET_PK } = require('../utils/config');
+const blockchain = require('../services/blockchain'); // Import blockchain untuk initProvider
 
 async function mainLoop() {
-  if (!MAIN_WALLET_PK || !RPC_URL) {
-    logger.error('MAIN_WALLET_PRIVATE_KEY atau BSC_RPC_URL tidak ada di file .env');
+  if (!MAIN_WALLET_PK) {
+    logger.error('MAIN_WALLET_PRIVATE_KEY tidak ditemukan di file .env');
     logger.error('Harap isi file .env dan restart aplikasi.');
     return;
+  }
+  
+  // --- BARU: PILIH MODE ---
+  const { mode } = await prompts.initialModePrompt();
+  const isTestMode = mode === 'test';
+
+  // Inisialisasi provider berdasarkan mode yang dipilih
+  try {
+      blockchain.initProvider(isTestMode);
+  } catch (e) {
+      logger.error(`Error inisialisasi provider: ${e.message}`);
+      return;
+  }
+
+  if (isTestMode) {
+    logger.warning('MODE UJI COBA (TESTNET) AKTIF. Transaksi HANYA akan dieksekusi di BSC TESTNET!');
+  } else {
+    logger.success('MODE UTAMA (MAINNET) AKTIF. Transaksi akan dieksekusi di BSC MAINNET.');
   }
   
   let running = true;
   while (running) {
     try {
+      // displayBalances tidak perlu tahu mode, dia hanya butuh signer
       await handleDisplayBalances();
       const { action } = await prompts.mainMenu();
       
       switch (action) {
         case 'create':
-          await handleCreateToken();
+          await handleCreateToken(isTestMode);
           break;
         case 'generate':
           await handleGenerateWallets();
           break;
-        case 'fund': // OPSI BARU: Menggabungkan fund_main_to_multi dan fund_custom
-          // Memanggil handleFundWallets tanpa parameter, yang sekarang akan menangani logika prompt tunggal
-          await handleFundWallets();
+        case 'fund':
+          await handleFundWallets(isTestMode);
           break;
         case 'snipe':
-          await handleSnipeToken();
+          await handleSnipeToken(isTestMode);
           break;
         case 'buy':
-          await handleTrade('buy');
+          await handleTrade('buy', isTestMode);
           break;
         case 'sell':
-          await handleTrade('sell');
+          await handleTrade('sell', isTestMode);
           break;
         case 'volume':
-          await handleVolumeBot();
+          await handleVolumeBot(isTestMode);
           break;
         case 'refund':
-          await handleRefundWallets();
+          await handleRefundWallets(isTestMode);
           break;
         case 'exit':
           running = false;
