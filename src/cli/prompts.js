@@ -1,4 +1,4 @@
-// src/cli/prompts.js
+// src/cli/prompts.js (Versi 5.0)
 const inquirer = require('inquirer');
 const { LABELS } = require('../utils/config');
 
@@ -174,6 +174,19 @@ const tradeTokenAddressPrompt = () => {
     },
   ]);
 };
+
+// Digunakan hanya untuk BUY (meminta jumlah BNB)
+const buyAmountPrompt = () => {
+  return inquirer.prompt([
+    {
+      type: 'input',
+      name: 'amount',
+      message: 'Jumlah BNB (e.g., "0.01") yang akan digunakan oleh SETIAP dompet untuk membeli:',
+      validate: input => (parseFloat(input) > 0) ? true : 'Jumlah harus angka desimal lebih besar dari 0',
+    }
+  ]);
+};
+
 
 // Digunakan hanya untuk SELL (memilih persentase atau jumlah custom)
 const sellAmountPrompt = (totalBalanceDisplay, symbol) => {
