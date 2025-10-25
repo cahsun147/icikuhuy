@@ -38,7 +38,7 @@ async function handleFundWallets(isTestMode = false) {
   }
   
   try {
-    // Meneruskan isTestMode
+    // Meneruskan isTestMode untuk Testnet transfer
     await blockchain.fundWallets(mainSigner, multiWalletAddresses, amount, isTestMode); 
   } catch (e) {
     logger.error(`Gagal mendanai dompet: ${e.message}`);
@@ -65,7 +65,7 @@ async function handleRefundWallets(isTestMode = false) {
   }
 
   try {
-    // Meneruskan isTestMode
+    // Meneruskan isTestMode untuk Testnet transfer
     await blockchain.refundWallets(multiSigners, mainSigner.address, isTestMode);
   } catch (e) {
     logger.error(`Gagal mengembalikan dana: ${e.message}`);

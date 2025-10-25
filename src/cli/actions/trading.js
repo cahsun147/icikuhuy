@@ -242,7 +242,7 @@ async function handleSnipeToken(isTestMode = false) {
   
   // Filter untuk event TokenCreate di TokenManagerV2
   const filter = {
-    address: CONTRACT_ADDRESSES.TOKEN_MANAGER_V2,
+    address: blockchain.getCurrentContracts().TOKEN_MANAGER_V2,
     topics: [
       ethers.utils.id("TokenCreate(address,address,uint256,string,string,uint256,uint256,uint256)")
     ]
