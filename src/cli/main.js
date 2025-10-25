@@ -36,8 +36,9 @@ async function mainLoop() {
         case 'generate':
           await handleGenerateWallets();
           break;
-        case 'fund_main_to_multi':
-          await handleFundWallets(false);
+        case 'fund': // OPSI BARU: Menggabungkan fund_main_to_multi dan fund_custom
+          // Memanggil handleFundWallets tanpa parameter, yang sekarang akan menangani logika prompt tunggal
+          await handleFundWallets();
           break;
         case 'snipe':
           await handleSnipeToken();
@@ -50,9 +51,6 @@ async function mainLoop() {
           break;
         case 'volume':
           await handleVolumeBot();
-          break;
-        case 'fund_custom':
-          await handleFundWallets(true);
           break;
         case 'refund':
           await handleRefundWallets();

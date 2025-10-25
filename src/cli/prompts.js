@@ -12,13 +12,12 @@ const mainMenu = () => {
       choices: [
         { name: '1. Create Token', value: 'create' },
         { name: '2. Generate Multiwallet', value: 'generate' },
-        { name: '3. Transfer BNB (Main to Multi)', value: 'fund_main_to_multi' },
+        { name: '3. Funding (Main to MultiWallet)', value: 'fund' }, // OPSI FUNDING BARU
         { name: '4. Sniper Token (Monitor Event)', value: 'snipe' },
         { name: '5. Buy Token (by CA)', value: 'buy' },
         { name: '6. Sell Token (by CA)', value: 'sell' },
         { name: '7. Volume Bot (by CA)', value: 'volume' },
-        { name: '8. Fund Wallets (Custom)', value: 'fund_custom' },
-        { name: '9. Refund BNB (Multi to Main)', value: 'refund' },
+        { name: '8. Refund BNB (Multi to Main)', value: 'refund' }, // Pindah ke urutan 8
         new inquirer.Separator(),
         { name: 'Keluar', value: 'exit' },
       ],
@@ -127,10 +126,9 @@ const generateWalletPrompts = () => {
   ]);
 };
 
-const fundWalletsPrompts = (action = 'fund') => {
-  const message = action === 'fund' 
-    ? 'Jumlah BNB (e.g., "0.01") yang akan dikirim dari MAIN wallet ke SETIAP multi-wallet:'
-    : 'Jumlah BNB (e.g., "0.01") yang akan dikirim dari MAIN wallet ke SETIAP multi-wallet (Custom):';
+// fundWalletsPrompts disederhanakan karena tidak ada lagi Custom vs Default
+const fundWalletsPrompts = () => {
+  const message = 'Jumlah BNB (e.g., "0.01") yang akan dikirim dari MAIN wallet ke SETIAP multi-wallet:';
     
   return inquirer.prompt([
     {
@@ -244,8 +242,8 @@ module.exports = {
   generateWalletPrompts,
   fundWalletsPrompts,
   tradeTokenPrompts,
-  walletChoicePrompt, // <-- Baru
+  walletChoicePrompt,
   snipePrompts,
   volumeBotPrompts,
-  confirmActionPrompt, // <-- Baru
+  confirmActionPrompt,
 };

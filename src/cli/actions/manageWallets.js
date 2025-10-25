@@ -13,9 +13,9 @@ async function handleGenerateWallets() {
   logger.success(`${count} dompet baru telah dibuat dan disimpan.`);
 }
 
-async function handleFundWallets(custom = false) {
-  const action = custom ? 'fund_custom' : 'fund';
-  const { amount } = await prompts.fundWalletsPrompts(action); // 'amount' adalah float string
+// Fungsi disederhanakan, tidak lagi memerlukan parameter 'custom'
+async function handleFundWallets() {
+  const { amount } = await prompts.fundWalletsPrompts(); // 'amount' adalah float string
   const mainSigner = await blockchain.getMainWalletSigner();
   const multiWallets = await wallet.loadMultiWallets(blockchain.getProvider());
   
@@ -29,7 +29,7 @@ async function handleFundWallets(custom = false) {
   
   // Konfirmasi
   const { confirm } = await prompts.confirmActionPrompt(
-    `Anda akan mengirim ${amount} BNB ke ${multiWalletAddresses.length} dompet. Total: ${totalCost} BNB. Lanjutkan?`
+    `Anda akan mengirim ${amount} BNB ke ${multiWalletAddresses.length} dompet. Total: ${totalCost.toFixed(5)} BNB. Lanjutkan?`
   );
   if (!confirm) {
     logger.warning('Pendanaan dibatalkan.');
