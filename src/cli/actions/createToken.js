@@ -1,4 +1,4 @@
-// src/cli/actions/createToken.js (Versi 3.0)
+// src/cli/actions/createToken.js (Versi 3.0 - Fix API Test Mode)
 const { ethers } = require('ethers');
 const blockchain = require('../../services/blockchain');
 const api = require('../../services/api');
@@ -13,6 +13,54 @@ const { tradeToken } = require('../../services/blockchain');
 async function handleCreateToken(isTestMode = false) {
   const signer = await blockchain.getMainWalletSigner();
   logger.info(`Menggunakan alamat kreator: ${signer.address}`);
+  
+  // Jika Test Mode, kita bypass API off-chain
+  if (isTestMode) {
+      logger.warning('[TEST MODE] Melewati langkah API off-chain (Nonce, Login, Upload, Get Args) karena API kemungkinan tidak mendukung Testnet.');
+      const tokenAddressSimulated = '0xSimulatedTokenAddressForTest';
+      
+      // Langsung lompat ke konfirmasi
+      const { confirm: confirmSimulated } = await prompts.confirmActionPrompt('Lanjutkan simulasi pembuatan token?');
+      if (!confirmSimulated) {
+          logger.warning('Pembuatan token dibatalkan.');
+          return;
+      }
+      
+      // Simulasi panggilan on-chain
+      const { tokenAddress } = await blockchain.callCreateToken(
+          signer,
+          '0x0', // Args dummy
+          '0x0', // Signature dummy
+          isTestMode
+      );
+      
+      // Lanjutkan ke Bundle Buy Simulasi
+      const { bundleAction } = await prompts.createTokenSubMenu();
+      if (bundleAction === 'create_and_buy') {
+          const { buyAmountEth } = await prompts.bundleBuyPrompt();
+          const fundsInWei = ethers.utils.parseEther(buyAmountEth);
+          const multiSigners = await blockchain.getMultiWalletSigners();
+          
+          if (multiSigners.length === 0) {
+              logger.warning('Tidak ada multi-wallet untuk membeli.');
+              return;
+          }
+
+          logger.info(`Memulai bundle buy simulasi untuk ${tokenAddress} dengan ${multiSigners.length} dompet...`);
+          const bundleTradeOptions = { isBot: true, gwei: '0.11', slippage: '1', isTestMode }; 
+          
+          const buyPromises = multiSigners.map(signer => 
+              tradeToken('buy', signer, tokenAddress, '0', fundsInWei, bundleTradeOptions)
+                  .catch(e => logger.error(`Gagal buy dari ${signer.address}: ${e.message}`))
+          );
+              
+          await Promise.all(buyPromises);
+          logger.success('Bundle buy simulasi selesai.');
+      }
+      return;
+  }
+  // --- END TEST MODE BYPASS ---
+
 
   // 1. Dapatkan input dari pengguna
   const tokenParams = await prompts.createTokenPrompts();
@@ -110,7 +158,7 @@ async function handleCreateToken(isTestMode = false) {
     const bundleTradeOptions = { isBot: true, gwei: '0.11', slippage: '1', isTestMode }; 
     
     const buyPromises = multiSigners.map(signer => 
-      blockchain.tradeToken('buy', signer, tokenAddress, '0', fundsInWei, bundleTradeOptions)
+      tradeToken('buy', signer, tokenAddress, '0', fundsInWei, bundleTradeOptions)
         .catch(e => logger.error(`Gagal buy dari ${signer.address}: ${e.message}`))
     );
         

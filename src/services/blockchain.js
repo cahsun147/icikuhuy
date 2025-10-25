@@ -1,4 +1,4 @@
-// src/services/blockchain.js (Versi 5.4)
+// src/services/blockchain.js (Versi 5.6 - Fix Gas Otomatis & Error Reporting)
 const { ethers } = require('ethers');
 const { CONTRACT_ADDRESSES, ABIS, RPC_MAINNET_URL, RPC_TESTNET_URL } = require('../utils/config');
 const logger = require('../utils/logger');
@@ -8,8 +8,8 @@ let provider;
 let currentNetwork;
 let currentContracts;
 
-// --- KONSTANTA GAS PRICE TETAP (Hanya untuk Bot/Transfer Massal) ---
-// Gas Price rendah untuk Volume Bot, Fund, Refund, dan Create Token (toleransi waktu lebih besar)
+// --- KONSTANTA GAS PRICE TETAP (Hanya untuk Bot/Simulasi Kontrak) ---
+// Gas Price rendah untuk Volume Bot, dan sebagai fallback GasPrice untuk simulasi
 const LOW_GAS_PRICE = ethers.utils.parseUnits("0.11", "gwei"); 
 // Batas gas yang diestimasi manual untuk interaksi kontrak
 const DEFAULT_GAS_LIMIT = ethers.BigNumber.from(400000); 
@@ -106,7 +106,6 @@ async function getTokenDecimals(tokenAddress) {
     const decimals = await tokenContract.decimals();
     return decimals;
   } catch (e) {
-    // Default ke 18 jika gagal (standar ERC20)
     logger.warning(`Gagal mendapatkan desimal untuk ${tokenAddress}. Menggunakan default 18.`);
     return 18;
   }
@@ -142,13 +141,14 @@ async function getTokenManagerInfo(tokenAddress) {
       quote: info.quote,
     };
   } catch (e) {
+    // Kontrak Helper tidak ada di Testnet, ini adalah penyebab error utama
     logger.error(`Gagal mendapatkan info token untuk ${tokenAddress}: call revert exception`);
     return null;
   }
 }
 
 /**
- * Memanggil createToken di TokenManagerV2 (menggunakan LOW_GAS_PRICE)
+ * Memanggil createToken di TokenManagerV2 (menggunakan LOW_GAS_PRICE untuk simulasi)
  * @param {boolean} isTestMode - Menentukan apakah akan melakukan dry run.
  */
 async function callCreateToken(signer, createArg, signature, isTestMode = false) {
@@ -168,7 +168,7 @@ async function callCreateToken(signer, createArg, signature, isTestMode = false)
   
   try {
     const tx = await contract.createToken(createArg, signature, {
-      gasPrice: LOW_GAS_PRICE, // LOW_GAS_PRICE untuk Create Token
+      gasPrice: LOW_GAS_PRICE, 
       gasLimit: DEFAULT_GAS_LIMIT,
     });
     logger.info(`Transaksi dikirim: ${tx.hash}`);
@@ -206,80 +206,125 @@ async function callCreateToken(signer, createArg, signature, isTestMode = false)
 }
 
 /**
- * Menggunakan LOW_GAS_PRICE untuk fund/transfer (HARUS dieksekusi di Testnet jika isTestMode=true)
- * @param {boolean} isTestMode - Menentukan apakah akan melakukan dry run (untuk Fund/Refund, ini adalah pengecualian).
+ * Fund Wallets: Menggunakan Gas Price Otomatis agar Transfer Testnet berhasil.
  */
 async function fundWallets(mainSigner, multiWalletAddresses, amountInEth, isTestMode = false) {
   logger.info(`Mengirim ${amountInEth} BNB ke ${multiWalletAddresses.length} dompet...`);
   
-  // TIDAK ADA dry run di sini, karena ini adalah transaksi transfer BNB yang diperlukan di Testnet
   if (isTestMode) {
-     logger.info('[TEST MODE] Eksekusi transfer BNB di Testnet...');
+      logger.info('[TEST MODE] Eksekusi transfer BNB di Testnet (Transfer BNB Testnet tidak disimulasikan).');
   }
 
   const amountInWei = ethers.utils.parseEther(amountInEth);
-  const promises = multiWalletAddresses.map(address => {
+  
+  // Mengirim semua transaksi secara paralel dengan pelaporan status
+  const promises = multiWalletAddresses.map((address) => {
     return mainSigner.sendTransaction({
       to: address,
       value: amountInWei,
-      gasPrice: LOW_GAS_PRICE, // LOW_GAS_PRICE untuk Transfer
-    }).then(tx => tx.wait());
+      // Hapus gasPrice/gasLimit untuk membiarkan Ethers/Provider menentukan yang optimal
+    })
+    .then(tx => tx.wait())
+    .then(receipt => ({ status: 'fulfilled', address, txHash: receipt.transactionHash }))
+    .catch(error => ({ 
+        status: 'rejected', 
+        address, 
+        error: error.reason || (error.error && error.error.message) || String(error) 
+    }));
   });
+
+  const results = await Promise.allSettled(promises);
   
-  await Promise.all(promises);
+  // Pelaporan status
+  results.forEach((result, index) => {
+      const address = result.value ? result.value.address : (result.reason ? result.reason.address : `0x...`);
+      const addressShort = address ? `${address.substring(0, 8)}...${address.substring(address.length - 4)}` : `Wallet ${index + 1}`;
+      
+      if (result.status === 'fulfilled') {
+          logger.success(`[Wallet ${index + 1} ${addressShort}] Berhasil (Tx: ${result.value.txHash.substring(0, 8)})`);
+      } else {
+          logger.error(`[Wallet ${index + 1} ${addressShort}] Gagal: ${result.reason.error || result.reason}`);
+      }
+  });
+
+  const failedCount = results.filter(r => r.status === 'rejected').length;
+  if (failedCount > 0) {
+      throw new Error(`Gagal mendanai ${failedCount} dompet.`); // Throw error agar tertangkap di handleManageWallets
+  }
   logger.success('Semua dompet berhasil didanai.');
 }
 
 /**
- * Menggunakan LOW_GAS_PRICE untuk refund (HARUS dieksekusi di Testnet jika isTestMode=true)
- * @param {boolean} isTestMode - Menentukan apakah akan melakukan dry run (untuk Fund/Refund, ini adalah pengecualian).
+ * Refund Wallets: Menggunakan Gas Price Otomatis agar Transfer Testnet berhasil.
  */
 async function refundWallets(multiSigners, mainWalletAddress, isTestMode = false) {
   logger.info(`Mengembalikan semua BNB dari ${multiSigners.length} dompet ke ${mainWalletAddress}...`);
   
-  // TIDAK ADA dry run di sini
   if (isTestMode) {
-      logger.info('[TEST MODE] Eksekusi refund BNB di Testnet...');
+      logger.info('[TEST MODE] Eksekusi refund BNB di Testnet (Refund BNB Testnet tidak disimulasikan).');
   }
   
-  const promises = multiSigners.map(async (signer) => {
-    try {
-      const balance = await signer.getBalance();
-      
-      const gasLimit = ethers.BigNumber.from(21000);
-      const gasCost = LOW_GAS_PRICE.mul(gasLimit); // Menggunakan LOW_GAS_PRICE
-      
-      const valueToSend = balance.sub(gasCost);
+  const promises = multiSigners.map((signer) => {
+    return (async () => {
+        const balance = await signer.getBalance();
+        
+        // Dapatkan gas price saat ini (otomatis)
+        const gasPrice = await getProvider().getGasPrice();
+        const gasLimit = ethers.BigNumber.from(21000); // Standard transfer gas limit
+        const gasCost = gasPrice.mul(gasLimit);
+        
+        const valueToSend = balance.sub(gasCost);
 
-      if (valueToSend.gt(0)) {
+        if (valueToSend.lte(0)) {
+            return { status: 'fulfilled', address: signer.address, message: 'Saldo tidak cukup untuk gas.' };
+        }
+        
         logger.info(`[${signer.address}] Mengirim ${ethers.utils.formatEther(valueToSend)} BNB...`);
+        
         const tx = await signer.sendTransaction({
-          to: mainWalletAddress,
-          value: valueToSend,
-          gasPrice: LOW_GAS_PRICE, // LOW_GAS_PRICE untuk Refund
-          gasLimit: gasLimit,
+            to: mainWalletAddress,
+            value: valueToSend,
+            // Hapus gasPrice/gasLimit untuk membiarkan Ethers/Provider menentukan yang optimal
         });
-        return tx.wait();
-      } else {
-        logger.warning(`[${signer.address}] Saldo tidak cukup untuk gas.`);
-      }
-    } catch (e) {
-      logger.warning(`Gagal mengembalikan dana dari ${signer.address}: ${e.message}`);
-    }
+        return tx.wait()
+            .then(receipt => ({ status: 'fulfilled', address: signer.address, txHash: receipt.transactionHash }))
+            .catch(error => ({ 
+                status: 'rejected', 
+                address: signer.address, 
+                error: error.reason || (error.error && error.error.message) || String(error) 
+            }));
+    })()
+    .catch(error => ({ 
+        status: 'rejected', 
+        address: signer.address, 
+        error: error.reason || (error.error && error.error.message) || String(error) 
+    }));
   });
 
-  await Promise.all(promises);
+  const results = await Promise.allSettled(promises);
+  
+  // Pelaporan status
+  results.forEach((result, index) => {
+      const address = result.value ? result.value.address : (result.reason ? result.reason.address : `0x...`);
+      const addressShort = address ? `${address.substring(0, 8)}...${address.substring(address.length - 4)}` : `Wallet ${index + 1}`;
+      
+      if (result.status === 'fulfilled' && result.value) {
+          const message = result.value.message || `Berhasil (Tx: ${result.value.txHash.substring(0, 8)})`;
+          logger.success(`[Wallet ${index + 1} ${addressShort}] ${message}`);
+      } else {
+          logger.error(`[Wallet ${index + 1} ${addressShort}] Gagal: ${result.reason.error || result.reason}`);
+      }
+  });
+
+  const failedCount = results.filter(r => r.status === 'rejected').length;
+  if (failedCount > 0) {
+      throw new Error(`Gagal merefund ${failedCount} dompet.`); // Throw error agar tertangkap di handleManageWallets
+  }
   logger.success('Proses refund selesai.');
 }
 
 /**
  * Fungsi trade (buy/sell) terpadu
- * @param {string} action - 'buy' atau 'sell'
- * @param {object} signer - Wallet signer
- * @param {string} tokenAddress - Alamat Token
- * @param {BigNumber} amountInWei - Jumlah token (jual) atau 0
- * @param {BigNumber} fundsInWei - Jumlah BNB (beli) atau 0
- * @param {object} tradeOptions - { isBot: boolean, gwei: string, slippage: string, isTestMode: boolean }
  */
 async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei = '0', tradeOptions = {}) {
   const info = await getTokenManagerInfo(tokenAddress);

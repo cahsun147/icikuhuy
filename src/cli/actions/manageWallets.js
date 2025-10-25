@@ -1,4 +1,4 @@
-// src/cli/actions/manageWallets.js (Versi 3.0)
+// src/cli/actions/manageWallets.js (Versi 3.2 - Detail Log Final)
 const blockchain = require('../../services/blockchain');
 const wallet = require('../../services/wallet');
 const prompts = require('../prompts');
@@ -40,7 +40,9 @@ async function handleFundWallets(isTestMode = false) {
   try {
     // Meneruskan isTestMode untuk Testnet transfer
     await blockchain.fundWallets(mainSigner, multiWalletAddresses, amount, isTestMode); 
+    // Pesan Sukses dicetak di blockchain.js, hanya perlu menangkap error high level di sini
   } catch (e) {
+    // Menangkap pesan error dari throw di blockchain.js
     logger.error(`Gagal mendanai dompet: ${e.message}`);
   }
 }
@@ -67,7 +69,9 @@ async function handleRefundWallets(isTestMode = false) {
   try {
     // Meneruskan isTestMode untuk Testnet transfer
     await blockchain.refundWallets(multiSigners, mainSigner.address, isTestMode);
+    // Pesan Sukses dicetak di blockchain.js, hanya perlu menangkap error high level di sini
   } catch (e) {
+    // Menangkap pesan error dari throw di blockchain.js
     logger.error(`Gagal mengembalikan dana: ${e.message}`);
   }
 }
