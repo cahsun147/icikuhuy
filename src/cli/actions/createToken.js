@@ -103,8 +103,11 @@ async function handleCreateToken() {
       return;
     }
 
+    // Set isBot = TRUE untuk menggunakan LOW_GAS_PRICE (0.11 Gwei) pada bundle buy
+    const isBot = true; 
+    
     const buyPromises = multiSigners.map(signer => 
-      tradeToken('buy', signer, tokenAddress, '0', fundsInWei)
+      tradeToken('buy', signer, tokenAddress, '0', fundsInWei, isBot)
         .catch(e => logger.error(`Gagal buy dari ${signer.address}: ${e.message}`))
     );
         

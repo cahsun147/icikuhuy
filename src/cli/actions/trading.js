@@ -59,8 +59,9 @@ async function handleTrade(action) {
 
   // 4. Eksekusi
   // Menggunakan Promise.all untuk eksekusi "simultan"
+  // isBot di-set FALSE karena ini adalah handleTrade manual
   const tradePromises = signers.map(signer => 
-    blockchain.tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei)
+    blockchain.tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei, false)
       .then(receipt => logger.success(`[${signer.address}] Transaksi ${action} berhasil: ${receipt.transactionHash}`))
       .catch(e => logger.error(`[${signer.address}] Transaksi ${action} gagal: ${e.message}`))
   );
@@ -122,8 +123,9 @@ async function handleSnipeToken() {
         logger.info('Sniper dihentikan. Memulai pembelian...');
         
         // Eksekusi pembelian dengan semua dompet
+        // isBot di-set FALSE karena ini adalah snipe yang seharusnya cepat (menggunakan AGGRESSIVE_GAS_PRICE)
         const buyPromises = multiSigners.map(signer => 
-          blockchain.tradeToken('buy', signer, token, '0', fundsInWei)
+          blockchain.tradeToken('buy', signer, token, '0', fundsInWei, false)
             .then(receipt => logger.success(`[${signer.address}] SNIPE BERHASIL: ${receipt.transactionHash}`))
             .catch(e => logger.error(`[${signer.address}] SNIPE GAGAL: ${e.message}`))
         );
@@ -180,7 +182,10 @@ async function handleVolumeBot() {
         .map(({ value }) => value)
         .slice(0, 2);
 
-      logger.info(`[VolumeBot] Buyer: ${buyerSigner.address}, Seller: ${sellerSigner.address}`);
+      logger.info(`[VolumeBot] Siklus dimulai: Buyer: ${buyerSigner.address}, Seller: ${sellerSigner.address}`);
+      
+      // Tambahkan parameter TRUE untuk mengaktifkan LOW_GAS_PRICE
+      const isBot = true; 
 
       // Cek saldo seller
       const sellerBalance = await blockchain.getTokenBalance(tokenAddress, sellerSigner.address);
@@ -188,17 +193,19 @@ async function handleVolumeBot() {
         logger.warning(`[VolumeBot] Seller ${sellerSigner.address} tidak punya cukup token (${ethers.utils.formatEther(sellerBalance)}). Melewatkan...`);
         // Lakukan pembelian saja untuk mengisi saldo
         logger.info(`[VolumeBot] Membeli token untuk Seller ${sellerSigner.address}...`);
-        await blockchain.tradeToken('buy', sellerSigner, tokenAddress, '0', buyFundsInWei)
+        await blockchain.tradeToken('buy', sellerSigner, tokenAddress, '0', buyFundsInWei, isBot)
           .catch(e => logger.error(`[VolumeBot] Top-up Gagal: ${e.message}`));
         return;
       }
       
       // Lakukan sell dan buy secara "bersamaan"
-      const sellPromise = blockchain.tradeToken('sell', sellerSigner, tokenAddress, sellAmountInWei, '0')
-        .catch(e => logger.error(`[VolumeBot] Sell Gagal: ${e.message}`));
+      const sellPromise = blockchain.tradeToken('sell', sellerSigner, tokenAddress, sellAmountInWei, '0', isBot)
+        .then(receipt => logger.success(`[VolumeBot-SELL] ${sellerSigner.address} berhasil: ${receipt.transactionHash}`))
+        .catch(e => logger.error(`[VolumeBot-SELL] Gagal: ${e.message}`));
         
-      const buyPromise = blockchain.tradeToken('buy', buyerSigner, tokenAddress, '0', buyFundsInWei)
-        .catch(e => logger.error(`[VolumeBot] Buy Gagal: ${e.message}`));
+      const buyPromise = blockchain.tradeToken('buy', buyerSigner, tokenAddress, '0', buyFundsInWei, isBot)
+        .then(receipt => logger.success(`[VolumeBot-BUY] ${buyerSigner.address} berhasil: ${receipt.transactionHash}`))
+        .catch(e => logger.error(`[VolumeBot-BUY] Gagal: ${e.message}`));
         
       await Promise.all([sellPromise, buyPromise]);
       logger.success('[VolumeBot] Siklus trade selesai.');

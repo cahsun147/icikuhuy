@@ -6,6 +6,14 @@ const { loadMainWallet, loadMultiWallets } = require('./wallet');
 
 let provider;
 
+// --- KONSTANTA GAS PRICE (VERSATILITY) ---
+// Gas Price agresif untuk transaksi sensitif waktu (Buy/Sell manual)
+const AGGRESSIVE_GAS_PRICE = ethers.utils.parseUnits("1.5", "gwei"); 
+// Gas Price rendah untuk Volume Bot, Fund, Refund, dan Create Token (toleransi waktu lebih besar)
+const LOW_GAS_PRICE = ethers.utils.parseUnits("0.11", "gwei"); 
+// Batas gas yang diestimasi manual untuk interaksi kontrak, untuk menghindari UNPREDICTABLE_GAS_LIMIT saat saldo rendah
+const MANUAL_GAS_LIMIT = ethers.BigNumber.from(400000); 
+
 function getProvider() {
   if (!provider) {
     provider = new ethers.providers.JsonRpcProvider(RPC_URL);
@@ -61,7 +69,7 @@ async function getTokenManagerInfo(tokenAddress) {
 }
 
 /**
- * Memanggil createToken di TokenManagerV2 (sesuai API-CreateToken.md)
+ * Memanggil createToken di TokenManagerV2 (menggunakan LOW_GAS_PRICE)
  */
 async function callCreateToken(signer, createArg, signature) {
   logger.info('Mengirim transaksi createToken ke blockchain...');
@@ -73,8 +81,8 @@ async function callCreateToken(signer, createArg, signature) {
   
   try {
     const tx = await contract.createToken(createArg, signature, {
-      // API Doc tidak menyebutkan value, tapi jika diperlukan, tambahkan di sini
-      // value: ethers.utils.parseEther("0.01") 
+      gasPrice: LOW_GAS_PRICE, // LOW_GAS_PRICE untuk Create Token
+      gasLimit: MANUAL_GAS_LIMIT,
     });
     logger.info(`Transaksi dikirim: ${tx.hash}`);
     const receipt = await tx.wait();
@@ -110,6 +118,9 @@ async function callCreateToken(signer, createArg, signature) {
   }
 }
 
+/**
+ * Menggunakan LOW_GAS_PRICE untuk fund/transfer
+ */
 async function fundWallets(mainSigner, multiWalletAddresses, amountInEth) {
   logger.info(`Mengirim ${amountInEth} BNB ke ${multiWalletAddresses.length} dompet...`);
   const amountInWei = ethers.utils.parseEther(amountInEth);
@@ -117,6 +128,7 @@ async function fundWallets(mainSigner, multiWalletAddresses, amountInEth) {
     return mainSigner.sendTransaction({
       to: address,
       value: amountInWei,
+      gasPrice: LOW_GAS_PRICE, // LOW_GAS_PRICE untuk Transfer
     }).then(tx => tx.wait());
   });
   
@@ -124,16 +136,18 @@ async function fundWallets(mainSigner, multiWalletAddresses, amountInEth) {
   logger.success('Semua dompet berhasil didanai.');
 }
 
+/**
+ * Menggunakan LOW_GAS_PRICE untuk refund
+ */
 async function refundWallets(multiSigners, mainWalletAddress) {
   logger.info(`Mengembalikan semua BNB dari ${multiSigners.length} dompet ke ${mainWalletAddress}...`);
   
   const promises = multiSigners.map(async (signer) => {
     try {
       const balance = await signer.getBalance();
-      const gasPrice = await getProvider().getGasPrice();
-      // Perkiraan gas limit untuk transfer BNB
+      
       const gasLimit = ethers.BigNumber.from(21000);
-      const gasCost = gasPrice.mul(gasLimit);
+      const gasCost = LOW_GAS_PRICE.mul(gasLimit); // Menggunakan LOW_GAS_PRICE
       
       const valueToSend = balance.sub(gasCost);
 
@@ -142,7 +156,7 @@ async function refundWallets(multiSigners, mainWalletAddress) {
         const tx = await signer.sendTransaction({
           to: mainWalletAddress,
           value: valueToSend,
-          gasPrice: gasPrice,
+          gasPrice: LOW_GAS_PRICE, // LOW_GAS_PRICE untuk Refund
           gasLimit: gasLimit,
         });
         return tx.wait();
@@ -160,8 +174,14 @@ async function refundWallets(multiSigners, mainWalletAddress) {
 
 /**
  * Fungsi trade (buy/sell) terpadu
+ * @param {string} action - 'buy' atau 'sell'
+ * @param {object} signer - Wallet signer
+ * @param {string} tokenAddress - Alamat Token
+ * @param {BigNumber} amountInWei - Jumlah token (jual) atau 0
+ * @param {BigNumber} fundsInWei - Jumlah BNB (beli) atau 0
+ * @param {boolean} isBot - Apakah dipanggil dari Volume Bot.
  */
-async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei = '0') {
+async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei = '0', isBot = false) {
   const info = await getTokenManagerInfo(tokenAddress);
   if (!info) {
     throw new Error('Tidak bisa mendapatkan info token manager.');
@@ -188,20 +208,29 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
   contract = getContract(tokenManagerAddress, abi, signer);
 
   let tx;
-  // const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 menit (tidak terpakai di V1/V2)
+  
+  // *** IMPLEMENTASI GAS PRICE BERSYARAT ***
+  const selectedGasPrice = isBot ? LOW_GAS_PRICE : AGGRESSIVE_GAS_PRICE;
+  logger.info(`[${signer.address}] Menggunakan Gas Price: ${ethers.utils.formatUnits(selectedGasPrice, "gwei")} Gwei`);
+
+  // Opsi transaksi dasar
+  let txOptions = {
+    gasLimit: MANUAL_GAS_LIMIT,
+    gasPrice: selectedGasPrice,
+  };
 
   if (action === 'buy') {
     // Sesuai API-Documents.md, V1 & V2 punya method serupa
-    // purchaseToken / buyToken (untuk amount)
-    // purchaseTokenAMAP / buyTokenAMAP (untuk funds)
     
     if (fundsInWei.gt(0)) {
       logger.info(`[${signer.address}] Membeli ${ethers.utils.formatEther(fundsInWei)} BNB...`);
       // V1: purchaseTokenAMAP(address token, uint256 funds, uint256 minAmount)
       // V2: buyTokenAMAP(address token, uint256 funds, uint256 minAmount)
-      // Keduanya memiliki signature yang sama untuk pemanggilan ini.
       const methodName = version === 1 ? 'purchaseTokenAMAP(address,uint256,uint256)' : 'buyTokenAMAP(address,uint256,uint256)';
-      tx = await contract[methodName](tokenAddress, fundsInWei, 0, { value: fundsInWei }); // 0 = minAmount
+      
+      txOptions.value = fundsInWei; 
+      tx = await contract[methodName](tokenAddress, fundsInWei, 0, txOptions); 
+      
     } else {
       logger.info(`[${signer.address}] Membeli ${ethers.utils.formatEther(amountInWei)} token...`);
       // V1: purchaseToken(address token, uint256 amount, uint256 maxFunds)
@@ -209,7 +238,9 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
       const methodName = version === 1 ? 'purchaseToken(address,uint256,uint256)' : 'buyToken(address,uint256,uint256)';
       // maxFunds (param terakhir) di-set sangat tinggi
       const maxFunds = ethers.utils.parseEther('1000'); 
-      tx = await contract[methodName](tokenAddress, amountInWei, maxFunds, { value: maxFunds });
+      
+      txOptions.value = maxFunds; // Walaupun hanya 'maxFunds', ini tetap dikirim sebagai 'value'
+      tx = await contract[methodName](tokenAddress, amountInWei, maxFunds, txOptions);
     }
   } else if (action === 'sell') {
     logger.info(`[${signer.address}] Menjual ${ethers.utils.formatEther(amountInWei)} token...`);
@@ -220,7 +251,8 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
     
     if (allowance.lt(amountInWei)) {
       logger.info(`[${signer.address}] Menyetujui (Approve) token...`);
-      const approveTx = await tokenContract.approve(tokenManagerAddress, ethers.constants.MaxUint256);
+      // Approve juga diset dengan Gas Price yang dipilih
+      const approveTx = await tokenContract.approve(tokenManagerAddress, ethers.constants.MaxUint256, txOptions);
       await approveTx.wait();
       logger.info(`[${signer.address}] Approve berhasil.`);
     }
@@ -229,11 +261,11 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
     if (version === 1) {
       // V1: saleToken(address tokenAddress, uint256 amount)
       const methodName = 'saleToken(address,uint256)';
-      tx = await contract[methodName](tokenAddress, amountInWei);
+      tx = await contract[methodName](tokenAddress, amountInWei, txOptions);
     } else {
       // V2: sellToken(address token, uint256 amount, uint256 minFunds)
       const methodName = 'sellToken(address,uint256,uint256)';
-      tx = await contract[methodName](tokenAddress, amountInWei, 0); // 0 = minFunds
+      tx = await contract[methodName](tokenAddress, amountInWei, 0, txOptions); // 0 = minFunds
     }
   } else {
     throw new Error('Aksi tidak dikenal');
