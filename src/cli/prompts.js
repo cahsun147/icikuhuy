@@ -1,4 +1,4 @@
-// src/cli/prompts.js (Versi 5.1 - Perbaikan Bug)
+// src/cli/prompts.js (Versi 5.2 - Final Fix)
 const inquirer = require('inquirer');
 const { LABELS } = require('../utils/config');
 

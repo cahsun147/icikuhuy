@@ -32,7 +32,11 @@ function initProvider(isTestMode) {
 
   provider = new ethers.providers.JsonRpcProvider(rpcUrl);
   currentNetwork = networkName;
+  // Perlu diperbarui: config.js harus mengekspor CONTRACT_ADDRESSES dengan kunci BSC_MAINNET dan BSC_TESTNET
   currentContracts = CONTRACT_ADDRESSES[networkName];
+  if (!currentContracts) {
+      throw new Error(`Konfigurasi kontrak untuk jaringan ${networkName} hilang di config.js`);
+  }
   logger.info(`Provider terhubung ke: ${networkName}`);
 }
 
