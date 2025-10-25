@@ -12,7 +12,7 @@ yarn-error.log*
 .env.production.local
 
 # API Documentation (generated files)
-API-*
+#API-*
 
 # Wallet and sensitive data
 wallets.json
