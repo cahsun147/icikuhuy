@@ -4,39 +4,51 @@ const { getBnbBalance } = require('../services/blockchain');
 const logger = require('../utils/logger');
 const chalk = require('chalk');
 
+// Fungsi pembantu untuk menyingkat alamat
+function shortenAddress(address) {
+  if (!address || address.length < 10) return address;
+  return `${address.substring(0, 5)}...${address.substring(address.length - 4)}`;
+}
+
 async function displayWalletBalances(mainWallet, multiWallets) {
   logger.log(chalk.cyan('\n--- Status Dompet ---'));
 
-  // Main Wallet
+  // 1. Tampilan Dompet Utama (Disimpelkan)
   const mainBalance = await getBnbBalance(mainWallet.address);
   const mainTable = new Table({
     head: [chalk.yellow('Dompet Utama'), chalk.yellow('Alamat'), chalk.yellow('Saldo BNB')],
-    colWidths: [20, 45, 20],
+    colWidths: [20, 30, 20],
+    style: { head: ['yellow'] }
   });
-  mainTable.push(['MAIN', mainWallet.address, parseFloat(mainBalance).toFixed(5)]);
+
+  const shortAddress = shortenAddress(mainWallet.address);
+  mainTable.push(['MAIN', shortAddress, parseFloat(mainBalance).toFixed(5)]);
   logger.log(mainTable.toString());
 
-  // Multi Wallets
+  // 2. Tampilan Ringkasan Multi Wallets
   if (multiWallets.length > 0) {
-    const multiTable = new Table({
-      head: [chalk.yellow('Multi-Dompet'), chalk.yellow('Alamat'), chalk.yellow('Saldo BNB')],
-      colWidths: [20, 45, 20],
-    });
-    
-    let totalMultiBnb = 0;
-    
-    // Ambil saldo secara paralel
+    // Ambil saldo semua multi-wallet secara paralel
     const balancePromises = multiWallets.map(wallet => getBnbBalance(wallet.address));
     const balances = await Promise.all(balancePromises);
     
-    multiWallets.forEach((wallet, index) => {
-      const balance = parseFloat(balances[index]);
-      totalMultiBnb += balance;
-      multiTable.push([`Wallet ${index + 1}`, wallet.address, balance.toFixed(5)]);
+    let totalMultiBnb = 0;
+    balances.forEach(balance => {
+      totalMultiBnb += parseFloat(balance);
     });
 
-    logger.log(multiTable.toString());
-    logger.log(chalk.magenta(`Total Multi-Dompet: ${multiWallets.length} | Total Saldo BNB: ${totalMultiBnb.toFixed(5)}`));
+    const multiSummaryTable = new Table({
+      head: [chalk.yellow('Kategori'), chalk.yellow('Nilai')],
+      colWidths: [20, 55],
+      style: { head: ['yellow'] }
+    });
+    
+    // Hanya menampilkan ringkasan
+    multiSummaryTable.push(
+      ['Total Dompet', `${multiWallets.length} dompet`],
+      ['Total Saldo BNB', `${totalMultiBnb.toFixed(5)}`]
+    );
+
+    logger.log(multiSummaryTable.toString());
   } else {
     logger.warning('Tidak ada multi-dompet yang ditemukan. Buat beberapa melalui menu.');
   }

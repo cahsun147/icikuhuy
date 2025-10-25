@@ -25,7 +25,7 @@ const mainMenu = () => {
   ]);
 };
 
-// ... (createTokenPrompts tidak berubah, kecuali pesan untuk imagePath) ...
+// ... (createTokenPrompts) ...
 
 const createTokenPrompts = () => {
   return inquirer.prompt([
@@ -126,7 +126,7 @@ const generateWalletPrompts = () => {
   ]);
 };
 
-// fundWalletsPrompts disederhanakan karena tidak ada lagi Custom vs Default
+// fundWalletsPrompts disederhanakan
 const fundWalletsPrompts = () => {
   const message = 'Jumlah BNB (e.g., "0.01") yang akan dikirim dari MAIN wallet ke SETIAP multi-wallet:';
     
@@ -140,26 +140,31 @@ const fundWalletsPrompts = () => {
   ]);
 };
 
-const walletChoicePrompt = () => {
+const walletChoicePrompt = (action) => {
+    const choices = [
+      { name: 'Semua Multi-Dompet', value: 'multi' },
+      { name: 'Hanya Dompet Utama', value: 'main' },
+    ];
+
+    if (action === 'sell') {
+      // Menambahkan opsi "Semua Wallet" untuk Sell
+      choices.unshift({ name: 'Semua Wallet (Main lalu Multi)', value: 'all' });
+    }
+
   return inquirer.prompt([
     {
       type: 'list',
       name: 'walletChoice',
       message: 'Gunakan dompet yang mana untuk transaksi?',
       loop: false,
-      choices: [
-        { name: 'Semua Multi-Dompet', value: 'multi' },
-        { name: 'Hanya Dompet Utama', value: 'main' },
-      ],
+      choices: choices,
     }
   ]);
 };
 
-const tradeTokenPrompts = (action) => {
-  const amountMessage = action === 'buy'
-    ? 'Jumlah BNB (e.g., "0.01") yang akan digunakan oleh SETIAP dompet untuk membeli:'
-    : 'Jumlah Token (e.g., "1000.5") yang akan dijual oleh SETIAP dompet:';
-    
+
+// Digunakan untuk BUY (jumlah BNB) dan Trade (hanya ambil CA)
+const tradeTokenAddressPrompt = () => {
   return inquirer.prompt([
     {
       type: 'input',
@@ -167,14 +172,67 @@ const tradeTokenPrompts = (action) => {
       message: 'Masukkan Contract Address (CA) token:',
       validate: input => /^0x[a-fA-F0-9]{40}$/.test(input) ? true : 'Alamat kontrak tidak valid',
     },
+  ]);
+};
+
+// Digunakan hanya untuk BUY (meminta jumlah BNB)
+const buyAmountPrompt = () => {
+  return inquirer.prompt([
     {
       type: 'input',
       name: 'amount',
-      message: amountMessage,
+      message: 'Jumlah BNB (e.g., "0.01") yang akan digunakan oleh SETIAP dompet untuk membeli:',
       validate: input => (parseFloat(input) > 0) ? true : 'Jumlah harus angka desimal lebih besar dari 0',
-    },
+    }
   ]);
 };
+
+
+// Digunakan hanya untuk SELL (memilih persentase atau jumlah custom)
+const sellAmountPrompt = (totalBalanceDisplay, symbol) => {
+  return inquirer.prompt([
+    {
+      type: 'list',
+      name: 'amountChoice',
+      message: `Pilih jumlah jual. Saldo Total: ${totalBalanceDisplay} ${symbol}.`,
+      loop: false,
+      choices: [
+        { name: '10% dari Saldo', value: '10' },
+        { name: '25% dari Saldo', value: '25' },
+        { name: '50% dari Saldo', value: '50' },
+        { name: '100% dari Saldo', value: '100' },
+        new inquirer.Separator(),
+        { name: 'Jumlah Custom (e.g., 245000 atau 245k)', value: 'custom' },
+      ],
+    },
+    {
+      type: 'input',
+      name: 'customAmount',
+      message: 'Masukkan jumlah token yang akan dijual (e.g., 245000, 245k):',
+      when: (answers) => answers.amountChoice === 'custom',
+      validate: (input) => {
+        // Logika validasi untuk angka atau format 'k'
+        const normalized = input.replace(/,/g, '');
+        let value = parseFloat(normalized);
+
+        if (normalized.toLowerCase().endsWith('k')) {
+          value = parseFloat(normalized.slice(0, -1)) * 1000;
+        }
+        
+        return (value > 0 && !isNaN(value)) ? true : 'Jumlah custom tidak valid atau kurang dari 0';
+      },
+      filter: (input) => {
+        // Ubah 'k' menjadi angka penuh
+        const normalized = input.replace(/,/g, '');
+        if (normalized.toLowerCase().endsWith('k')) {
+          return parseFloat(normalized.slice(0, -1)) * 1000;
+        }
+        return parseFloat(normalized);
+      }
+    }
+  ]);
+};
+
 
 const snipePrompts = () => {
   return inquirer.prompt([
@@ -241,8 +299,10 @@ module.exports = {
   bundleBuyPrompt,
   generateWalletPrompts,
   fundWalletsPrompts,
-  tradeTokenPrompts,
   walletChoicePrompt,
+  tradeTokenAddressPrompt, // BARU: Hanya ambil CA
+  buyAmountPrompt,        // BARU: Hanya ambil jumlah BNB (untuk buy)
+  sellAmountPrompt,       // BARU: Ambil jumlah sell (persentase/custom)
   snipePrompts,
   volumeBotPrompts,
   confirmActionPrompt,

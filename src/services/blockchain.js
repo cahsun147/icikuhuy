@@ -38,10 +38,33 @@ async function getBnbBalance(address) {
   return ethers.utils.formatEther(balance);
 }
 
+/**
+ * Mendapatkan saldo token (dalam format BigNumber)
+ * @param {string} tokenAddress - Alamat kontrak token
+ * @param {string} walletAddress - Alamat dompet
+ * @returns {Promise<ethers.BigNumber>} Saldo token
+ */
 async function getTokenBalance(tokenAddress, walletAddress) {
   const tokenContract = getContract(tokenAddress, ABIS.ERC20, getProvider());
   const balance = await tokenContract.balanceOf(walletAddress);
   return balance;
+}
+
+/**
+ * Mendapatkan desimal token (0-18)
+ * @param {string} tokenAddress - Alamat kontrak token
+ * @returns {Promise<number>} Jumlah desimal
+ */
+async function getTokenDecimals(tokenAddress) {
+  try {
+    const tokenContract = getContract(tokenAddress, ABIS.ERC20, getProvider());
+    const decimals = await tokenContract.decimals();
+    return decimals;
+  } catch (e) {
+    // Default ke 18 jika gagal (standar ERC20)
+    logger.warning(`Gagal mendapatkan desimal untuk ${tokenAddress}. Menggunakan default 18.`);
+    return 18;
+  }
 }
 
 /**
@@ -243,7 +266,7 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
       tx = await contract[methodName](tokenAddress, amountInWei, maxFunds, txOptions);
     }
   } else if (action === 'sell') {
-    logger.info(`[${signer.address}] Menjual ${ethers.utils.formatEther(amountInWei)} token...`);
+    logger.info(`[${signer.address}] Menjual ${ethers.utils.formatUnits(amountInWei, await getTokenDecimals(tokenAddress))} token...`);
     
     // 1. Approve
     const tokenContract = getContract(tokenAddress, ABIS.ERC20, signer);
@@ -280,6 +303,7 @@ module.exports = {
   getMultiWalletSigners,
   getBnbBalance,
   getTokenBalance,
+  getTokenDecimals, // <-- BARU
   getTokenManagerInfo,
   callCreateToken,
   fundWallets,
