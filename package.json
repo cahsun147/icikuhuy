@@ -1,0 +1,20 @@
+{
+  "name": "four-meme-cli-bundler",
+  "version": "1.0.0",
+  "description": "CLI Bot for Four.Meme Platform",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "chalk": "^4.1.2",
+    "cli-table3": "^0.6.3",
+    "dotenv": "^16.3.1",
+    "ethers": "^5.7.2",
+    "form-data": "^4.0.0",
+    "fs-extra": "^11.1.1",
+    "inquirer": "^8.2.4"
+  }
+}
