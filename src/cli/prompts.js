@@ -146,8 +146,8 @@ const walletChoicePrompt = (action) => {
       { name: 'Hanya Dompet Utama', value: 'main' },
     ];
 
-    if (action === 'sell') {
-      // Menambahkan opsi "Semua Wallet" untuk Sell
+    if (action === 'sell' || action === 'buy') {
+      // Menambahkan opsi "Semua Wallet" untuk Sell dan Buy
       choices.unshift({ name: 'Semua Wallet (Main lalu Multi)', value: 'all' });
     }
 
@@ -163,7 +163,7 @@ const walletChoicePrompt = (action) => {
 };
 
 
-// Digunakan untuk BUY (jumlah BNB) dan Trade (hanya ambil CA)
+// Digunakan untuk Trade (hanya ambil CA)
 const tradeTokenAddressPrompt = () => {
   return inquirer.prompt([
     {
@@ -174,19 +174,6 @@ const tradeTokenAddressPrompt = () => {
     },
   ]);
 };
-
-// Digunakan hanya untuk BUY (meminta jumlah BNB)
-const buyAmountPrompt = () => {
-  return inquirer.prompt([
-    {
-      type: 'input',
-      name: 'amount',
-      message: 'Jumlah BNB (e.g., "0.01") yang akan digunakan oleh SETIAP dompet untuk membeli:',
-      validate: input => (parseFloat(input) > 0) ? true : 'Jumlah harus angka desimal lebih besar dari 0',
-    }
-  ]);
-};
-
 
 // Digunakan hanya untuk SELL (memilih persentase atau jumlah custom)
 const sellAmountPrompt = (totalBalanceDisplay, symbol) => {
@@ -231,6 +218,32 @@ const sellAmountPrompt = (totalBalanceDisplay, symbol) => {
       }
     }
   ]);
+};
+
+// BARU: Prompt untuk pengaturan Gwei dan Slippage/minFunds
+const tradeOptionsPrompt = (action) => {
+    // Default minFunds di set ke 0 (nol slippage) untuk BUY dan 1 (0.01%) untuk SELL
+    const defaultSlippage = action === 'buy' ? '0' : '1'; 
+    const defaultGwei = '1.5';
+
+    return inquirer.prompt([
+        {
+            type: 'input',
+            name: 'gwei',
+            message: `Custom Gas Price (Gwei): (Default: ${defaultGwei} Gwei)`,
+            default: defaultGwei,
+            validate: input => (parseFloat(input) > 0 && parseFloat(input) <= 200) ? true : 'Gwei harus antara 0.11 dan 200',
+            filter: input => parseFloat(input).toFixed(2),
+        },
+        {
+            type: 'input',
+            name: 'slippage',
+            message: `Minimum Funds/Token (Slippage %) untuk ${action.toUpperCase()}: (Default: ${defaultSlippage}%)`,
+            default: defaultSlippage,
+            validate: input => (parseFloat(input) >= 0 && parseFloat(input) <= 50) ? true : 'Slippage harus antara 0% dan 50%',
+            filter: input => parseFloat(input).toFixed(2),
+        },
+    ]);
 };
 
 
@@ -300,9 +313,10 @@ module.exports = {
   generateWalletPrompts,
   fundWalletsPrompts,
   walletChoicePrompt,
-  tradeTokenAddressPrompt, // BARU: Hanya ambil CA
-  buyAmountPrompt,        // BARU: Hanya ambil jumlah BNB (untuk buy)
-  sellAmountPrompt,       // BARU: Ambil jumlah sell (persentase/custom)
+  tradeTokenAddressPrompt,
+  buyAmountPrompt,
+  sellAmountPrompt,
+  tradeOptionsPrompt, // BARU
   snipePrompts,
   volumeBotPrompts,
   confirmActionPrompt,

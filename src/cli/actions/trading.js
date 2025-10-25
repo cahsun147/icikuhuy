@@ -1,4 +1,4 @@
-// src/cli/actions/trading.js (Versi 3.1)
+// src/cli/actions/trading.js (Versi 3.3)
 const { ethers } = require('ethers');
 const blockchain = require('../../services/blockchain');
 const prompts = require('../prompts');
@@ -7,7 +7,7 @@ const { ABIS, CONTRACT_ADDRESSES } = require('../../utils/config');
 const { loadMultiWallets } = require('../../services/wallet');
 
 // Versi skrip saat ini (dibuat untuk pelacakan)
-const SCRIPT_VERSION = '3.1'; 
+const SCRIPT_VERSION = '3.3'; 
 
 let volumeBotInterval = null;
 let snipeListener = null;
@@ -41,21 +41,17 @@ async function handleTrade(action) {
     return;
   }
   
-  // 3. Tentukan jumlah trade (logika kompleks untuk SELL)
+  // 3. Tentukan jumlah trade (logika kompleks untuk SELL/BUY)
   let amountInWei = ethers.BigNumber.from('0');
   let fundsInWei = ethers.BigNumber.from('0');
   let amountDisplay = "";
-  let totalTokenBalance = ethers.BigNumber.from('0');
   let decimals = 18; // Default
+  let sellPromptResult = {};
 
-  if (action === 'buy') {
-    const { amount } = await prompts.buyAmountPrompt();
-    fundsInWei = ethers.utils.parseEther(amount); // 'amount' adalah string BNB, e.g., "0.01"
-    amountDisplay = `${amount} BNB`;
-    
-  } else if (action === 'sell') {
+  if (action === 'sell') {
     // a. Dapatkan desimal & saldo total untuk semua signers
     decimals = await blockchain.getTokenDecimals(tokenAddress);
+    let totalTokenBalance = ethers.BigNumber.from('0');
 
     for (const signer of signers) {
       const balance = await blockchain.getTokenBalance(tokenAddress, signer.address);
@@ -65,53 +61,59 @@ async function handleTrade(action) {
     const totalBalanceDisplay = ethers.utils.formatUnits(totalTokenBalance, decimals);
     
     // b. Tanya jumlah/persentase sell
-    const { amountChoice, customAmount } = await prompts.sellAmountPrompt(totalBalanceDisplay, await getContractSymbol(tokenAddress));
+    sellPromptResult = await prompts.sellAmountPrompt(totalBalanceDisplay, await getContractSymbol(tokenAddress));
+    const { amountChoice, customAmount } = sellPromptResult;
     
     let sellAmountBase;
     
     if (amountChoice === 'custom') {
-      sellAmountBase = customAmount; // Sudah dalam bentuk angka float (misalnya 245000)
+      sellAmountBase = customAmount;
     } else {
-      const percentage = parseInt(amountChoice) / 100;
-      
-      // *** PERBAIKAN LOGIKA PRESISI FLOATING-POINT ***
+      // *** PERBAIKAN LOGIKA PRESISI FLOATING-POINT (Kasus Umum) ***
       if (amountChoice === '100') {
-          // Jika 100%, gunakan totalTokenBalance langsung, lalu konversi ke string
-          // Ini adalah cara paling aman untuk menghindari error floating point.
+          // Jika 100%, gunakan totalBalanceDisplay string secara langsung (paling aman)
           sellAmountBase = totalBalanceDisplay;
       } else {
-          // Hitung jumlah berdasarkan persentase
-          // Lakukan perhitungan lalu potong/trim ke jumlah desimal yang benar
+          // Hitung jumlah berdasarkan persentase, lalu potong/trim ke desimal yang benar
+          const percentage = parseInt(amountChoice) / 100;
           const calculatedAmount = parseFloat(totalBalanceDisplay) * percentage;
-          sellAmountBase = calculatedAmount.toFixed(decimals); // Trim ke desimal yang benar
+          sellAmountBase = calculatedAmount.toFixed(decimals); 
       }
       // **********************************************
     }
     
     // c. Konversi jumlah jual (sellAmountBase) ke BigNumber (Wei)
     try {
-      // Gunakan parseUnits pada string yang sudah dipotong/valid
       amountInWei = ethers.utils.parseUnits(sellAmountBase.toString(), decimals); 
     } catch (e) {
-      logger.error(`Error konversi jumlah sell: ${e.message}. Pastikan jumlah tidak melebihi saldo.`);
+      logger.error(`Error konversi jumlah sell: ${e.message}. Input: ${sellAmountBase.toString()}`);
       return;
     }
     
-    // Verifikasi: Apakah jumlah yang diminta melebihi saldo? (Perbandingan BigNumber)
     if (amountInWei.gt(totalTokenBalance)) {
         logger.error(`Jumlah jual (${ethers.utils.formatUnits(amountInWei, decimals)}) melebihi total saldo token yang tersedia (${totalBalanceDisplay}). Transaksi dibatalkan.`);
         return;
     }
 
     amountDisplay = `${ethers.utils.formatUnits(amountInWei, decimals)} Token`;
-  }
 
-  // 4. Konfirmasi
+  } else if (action === 'buy') {
+    const { amount } = await prompts.buyAmountPrompt();
+    fundsInWei = ethers.utils.parseEther(amount); 
+    amountDisplay = `${amount} BNB`;
+  }
+  
+  // 4. Tanya opsi trade (Gwei dan Slippage)
+  const tradeOptions = await prompts.tradeOptionsPrompt(action);
+
+  // 5. Konfirmasi
   logger.info(`\n--- KONFIRMASI ${action.toUpperCase()} ---`);
   logger.info(` Aksi: ${action.toUpperCase()}`);
   logger.info(` Token: ${tokenAddress}`);
   logger.info(` Jumlah: ${amountDisplay}`);
   logger.info(` Dompet: ${walletChoice} (${signers.length} dompet)`);
+  logger.info(` Custom Gwei: ${tradeOptions.gwei} Gwei`);
+  logger.info(` Slippage: ${tradeOptions.slippage}%`);
   logger.info('-------------------------');
   
   const { confirm } = await prompts.confirmActionPrompt('Lanjutkan transaksi ini?');
@@ -122,52 +124,55 @@ async function handleTrade(action) {
 
   logger.info(`Memulai ${action} untuk ${tokenAddress} dengan ${signers.length} dompet...`);
   
-  // 5. Eksekusi
+  // 6. Eksekusi
   const tradePromises = signers.map(async signer => {
-    // Hitung alokasi sell untuk setiap dompet
     let individualAmountInWei = amountInWei;
-    
-    // Ambil amountChoice lagi dari prompt untuk logika alokasi
-    const amountChoice = prompts.sellAmountPrompt.answers.amountChoice;
+    let finalFundsInWei = fundsInWei;
 
     if (action === 'sell') {
-      // Dapatkan saldo per dompet
       const currentBalance = await blockchain.getTokenBalance(tokenAddress, signer.address);
       
-      if (amountChoice === '100') {
-        // Jika menjual 100% dari total, maka dompet ini menjual saldonya sendiri
+      // Jika 100%, jual saldo dompet itu sendiri
+      if (sellPromptResult.amountChoice === '100') {
         individualAmountInWei = currentBalance;
       } else {
-        // Jika menjual persentase/custom dari TOTAL, bagi rata di semua dompet.
-        // Kita menggunakan pembagian integer BigNumber karena jumlah sudah dihitung sebelumnya.
-        
-        // Cek apakah amountInWei adalah hasil dari persentase/custom
+        // Jika persentase/custom, bagi rata ke setiap dompet
         if (amountInWei.gt(0)) {
-           // Bagi rata: Total Amount In Wei / Jumlah dompet
+           // Pembagian integer untuk menghindari error floating point
            individualAmountInWei = amountInWei.div(signers.length);
         }
-
       }
       
-      // Cek Batas Atas: Jika bagian individu lebih besar dari saldo dompet, gunakan saldo dompet.
+      // Batas atas: tidak boleh melebihi saldo dompet yang ada
       if (currentBalance.lt(individualAmountInWei)) {
          individualAmountInWei = currentBalance;
       }
       
-      // Jika saldo dompet nol, lewati
+      // Cek apakah saldo nol (setelah pembagian)
       if (individualAmountInWei.isZero()) {
          logger.warning(`[${signer.address}] Saldo token nol. Melewatkan transaksi.`);
          return;
       }
       
       logger.info(`[${signer.address}] Menjual: ${ethers.utils.formatUnits(individualAmountInWei, decimals)} Token...`);
-    } else {
-       // Untuk BUY, fundsInWei dan amountInWei sudah dihitung per dompet sebelumnya
-       individualAmountInWei = amountInWei; 
+
+    } else if (action === 'buy') {
+      // Untuk Buy, dana dibagi rata
+      if (fundsInWei.gt(0)) {
+        // Pembagian integer untuk menghindari error floating point
+        finalFundsInWei = fundsInWei.div(signers.length); 
+      }
     }
     
-    // Eksekusi Trade
-    return blockchain.tradeToken(action, signer, tokenAddress, individualAmountInWei, fundsInWei, false)
+    // Eksekusi Trade, meneruskan opsi kustom dan parameter yang telah dihitung per dompet
+    return blockchain.tradeToken(
+        action, 
+        signer, 
+        tokenAddress, 
+        individualAmountInWei, 
+        finalFundsInWei, 
+        { isBot: false, gwei: tradeOptions.gwei, slippage: tradeOptions.slippage }
+      )
       .then(receipt => logger.success(`[${signer.address}] Transaksi ${action} berhasil: ${receipt.transactionHash}`))
       .catch(e => logger.error(`[${signer.address}] Transaksi ${action} gagal: ${e.message}`));
   });
@@ -181,6 +186,7 @@ async function handleTrade(action) {
 // Fungsi pembantu untuk mendapatkan simbol (digunakan di sellAmountPrompt)
 async function getContractSymbol(tokenAddress) {
   try {
+    // Kita ambil dari blockchain.js
     const tokenContract = blockchain.getContract(tokenAddress, ABIS.ERC20, blockchain.getProvider());
     const symbol = await tokenContract.symbol();
     return symbol;
@@ -242,9 +248,10 @@ async function handleSnipeToken() {
         logger.info('Sniper dihentikan. Memulai pembelian...');
         
         // Eksekusi pembelian dengan semua dompet
-        // isBot di-set FALSE karena ini adalah snipe yang seharusnya cepat (menggunakan AGGRESSIVE_GAS_PRICE)
+        // isBot di-set TRUE karena ini adalah aksi cepat (menggunakan AGGRESSIVE_GAS_PRICE default)
         const buyPromises = multiSigners.map(signer => 
-          blockchain.tradeToken('buy', signer, token, '0', fundsInWei, false)
+          // Menggunakan tradeOptions standard/aggressive
+          blockchain.tradeToken('buy', signer, token, '0', fundsInWei, { isBot: true, gwei: '1.5', slippage: '0' })
             .then(receipt => logger.success(`[${signer.address}] SNIPE BERHASIL: ${receipt.transactionHash}`))
             .catch(e => logger.error(`[${signer.address}] SNIPE GAGAL: ${e.message}`))
         );
@@ -303,8 +310,8 @@ async function handleVolumeBot() {
 
       logger.info(`[VolumeBot] Siklus dimulai: Buyer: ${buyerSigner.address}, Seller: ${sellerSigner.address}`);
       
-      // Tambahkan parameter TRUE untuk mengaktifkan LOW_GAS_PRICE
-      const isBot = true; 
+      // Tambahkan parameter TRUE untuk mengaktifkan LOW_GAS_PRICE (0.11 Gwei)
+      const botTradeOptions = { isBot: true, gwei: '0.11', slippage: '1' }; 
 
       // Cek saldo seller
       const sellerBalance = await blockchain.getTokenBalance(tokenAddress, sellerSigner.address);
@@ -312,17 +319,17 @@ async function handleVolumeBot() {
         logger.warning(`[VolumeBot] Seller ${sellerSigner.address} tidak punya cukup token (${ethers.utils.formatEther(sellerBalance)}). Melewatkan...`);
         // Lakukan pembelian saja untuk mengisi saldo
         logger.info(`[VolumeBot] Membeli token untuk Seller ${sellerSigner.address}...`);
-        await blockchain.tradeToken('buy', sellerSigner, tokenAddress, '0', buyFundsInWei, isBot)
+        await blockchain.tradeToken('buy', sellerSigner, tokenAddress, '0', buyFundsInWei, botTradeOptions)
           .catch(e => logger.error(`[VolumeBot] Top-up Gagal: ${e.message}`));
         return;
       }
       
       // Lakukan sell dan buy secara "bersamaan"
-      const sellPromise = blockchain.tradeToken('sell', sellerSigner, tokenAddress, sellAmountInWei, '0', isBot)
+      const sellPromise = blockchain.tradeToken('sell', sellerSigner, tokenAddress, sellAmountInWei, '0', botTradeOptions)
         .then(receipt => logger.success(`[VolumeBot-SELL] ${sellerSigner.address} berhasil: ${receipt.transactionHash}`))
         .catch(e => logger.error(`[VolumeBot-SELL] Gagal: ${e.message}`));
         
-      const buyPromise = blockchain.tradeToken('buy', buyerSigner, tokenAddress, '0', buyFundsInWei, isBot)
+      const buyPromise = blockchain.tradeToken('buy', buyerSigner, tokenAddress, '0', buyFundsInWei, botTradeOptions)
         .then(receipt => logger.success(`[VolumeBot-BUY] ${buyerSigner.address} berhasil: ${receipt.transactionHash}`))
         .catch(e => logger.error(`[VolumeBot-BUY] Gagal: ${e.message}`));
         

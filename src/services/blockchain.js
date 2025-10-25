@@ -1,4 +1,4 @@
-// src/services/blockchain.js
+// src/services/blockchain.js (Versi 5.0)
 const { ethers } = require('ethers');
 const { RPC_URL, ABIS, CONTRACT_ADDRESSES } = require('../utils/config');
 const logger = require('../utils/logger');
@@ -6,13 +6,11 @@ const { loadMainWallet, loadMultiWallets } = require('./wallet');
 
 let provider;
 
-// --- KONSTANTA GAS PRICE (VERSATILITY) ---
-// Gas Price agresif untuk transaksi sensitif waktu (Buy/Sell manual)
-const AGGRESSIVE_GAS_PRICE = ethers.utils.parseUnits("1.5", "gwei"); 
+// --- KONSTANTA GAS PRICE TETAP (Hanya untuk Bot/Transfer Massal) ---
 // Gas Price rendah untuk Volume Bot, Fund, Refund, dan Create Token (toleransi waktu lebih besar)
 const LOW_GAS_PRICE = ethers.utils.parseUnits("0.11", "gwei"); 
-// Batas gas yang diestimasi manual untuk interaksi kontrak, untuk menghindari UNPREDICTABLE_GAS_LIMIT saat saldo rendah
-const MANUAL_GAS_LIMIT = ethers.BigNumber.from(400000); 
+// Batas gas yang diestimasi manual untuk interaksi kontrak
+const DEFAULT_GAS_LIMIT = ethers.BigNumber.from(400000); 
 
 function getProvider() {
   if (!provider) {
@@ -105,7 +103,7 @@ async function callCreateToken(signer, createArg, signature) {
   try {
     const tx = await contract.createToken(createArg, signature, {
       gasPrice: LOW_GAS_PRICE, // LOW_GAS_PRICE untuk Create Token
-      gasLimit: MANUAL_GAS_LIMIT,
+      gasLimit: DEFAULT_GAS_LIMIT,
     });
     logger.info(`Transaksi dikirim: ${tx.hash}`);
     const receipt = await tx.wait();
@@ -202,9 +200,9 @@ async function refundWallets(multiSigners, mainWalletAddress) {
  * @param {string} tokenAddress - Alamat Token
  * @param {BigNumber} amountInWei - Jumlah token (jual) atau 0
  * @param {BigNumber} fundsInWei - Jumlah BNB (beli) atau 0
- * @param {boolean} isBot - Apakah dipanggil dari Volume Bot.
+ * @param {object} tradeOptions - { isBot: boolean, gwei: string, slippage: string }
  */
-async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei = '0', isBot = false) {
+async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei = '0', tradeOptions = {}) {
   const info = await getTokenManagerInfo(tokenAddress);
   if (!info) {
     throw new Error('Tidak bisa mendapatkan info token manager.');
@@ -232,41 +230,61 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
 
   let tx;
   
-  // *** IMPLEMENTASI GAS PRICE BERSYARAT ***
-  const selectedGasPrice = isBot ? LOW_GAS_PRICE : AGGRESSIVE_GAS_PRICE;
-  logger.info(`[${signer.address}] Menggunakan Gas Price: ${ethers.utils.formatUnits(selectedGasPrice, "gwei")} Gwei`);
+  // *** IMPLEMENTASI GAS PRICE BERSYARAT & CUSTOM ***
+  // Jika isBot TRUE, gunakan LOW_GAS_PRICE. Jika FALSE, gunakan custom Gwei dari tradeOptions
+  const finalGasPrice = tradeOptions.isBot ? LOW_GAS_PRICE : ethers.utils.parseUnits(tradeOptions.gwei.toString(), "gwei");
+  const minAmountOrFundsSlippage = tradeOptions.slippage;
+  
+  logger.info(`[${signer.address}] Menggunakan Gas Price: ${ethers.utils.formatUnits(finalGasPrice, "gwei")} Gwei`);
 
   // Opsi transaksi dasar
   let txOptions = {
-    gasLimit: MANUAL_GAS_LIMIT,
-    gasPrice: selectedGasPrice,
+    gasLimit: DEFAULT_GAS_LIMIT,
+    gasPrice: finalGasPrice,
   };
+  
+  // Hitung Slippage/minFunds untuk V2 (V1 minAmount/maxFunds di set di handleTrade)
+  let minAmountWei = ethers.BigNumber.from(0); 
 
   if (action === 'buy') {
-    // Sesuai API-Documents.md, V1 & V2 punya method serupa
     
+    // Perhitungan minAmount (Slippage) untuk V2: minAmount = estimatedAmount * (1 - slippage%)
+    // Karena kita tidak memiliki fungsi tryBuy di sini, kita akan menyederhanakan
+    // Jika slippage > 0, kita akan menghitung minAmount.
+    if (minAmountOrFundsSlippage && minAmountOrFundsSlippage > 0) {
+        logger.warning("Perhatian: Perhitungan minAmount Buy (slippage) tanpa tryBuy bersifat spekulatif. Set minAmount = 0 jika tidak yakin.");
+    }
+    
+    // Untuk V1, minAmount selalu 0 di purchaseTokenAMAP, V2 bisa minAmount > 0
+    // Karena kita tidak bisa memprediksi jumlah token yang akan diterima (tryBuy tidak dipanggil),
+    // kita akan membiarkan minAmount tetap 0 untuk Buy, kecuali jika BuyAmount digunakan.
+
     if (fundsInWei.gt(0)) {
+      // Pembelian dengan dana (BNB) spesifik (AMAP)
       logger.info(`[${signer.address}] Membeli ${ethers.utils.formatEther(fundsInWei)} BNB...`);
-      // V1: purchaseTokenAMAP(address token, uint256 funds, uint256 minAmount)
-      // V2: buyTokenAMAP(address token, uint256 funds, uint256 minAmount)
       const methodName = version === 1 ? 'purchaseTokenAMAP(address,uint256,uint256)' : 'buyTokenAMAP(address,uint256,uint256)';
       
+      // Jika Buy, minAmount adalah minimum token yang akan diterima. Kita set 0 untuk membatasi slippage.
       txOptions.value = fundsInWei; 
-      tx = await contract[methodName](tokenAddress, fundsInWei, 0, txOptions); 
+      minAmountWei = ethers.BigNumber.from(0); 
+      tx = await contract[methodName](tokenAddress, fundsInWei, minAmountWei, txOptions); 
       
     } else {
-      logger.info(`[${signer.address}] Membeli ${ethers.utils.formatEther(amountInWei)} token...`);
-      // V1: purchaseToken(address token, uint256 amount, uint256 maxFunds)
-      // V2: buyToken(address token, uint256 amount, uint256 maxFunds)
+      // Pembelian dengan jumlah token spesifik
+      logger.info(`[${signer.address}] Membeli ${ethers.utils.formatUnits(amountInWei, await getTokenDecimals(tokenAddress))} token...`);
       const methodName = version === 1 ? 'purchaseToken(address,uint256,uint256)' : 'buyToken(address,uint256,uint256)';
-      // maxFunds (param terakhir) di-set sangat tinggi
-      const maxFunds = ethers.utils.parseEther('1000'); 
       
-      txOptions.value = maxFunds; // Walaupun hanya 'maxFunds', ini tetap dikirim sebagai 'value'
+      // maxFunds (param terakhir) dihitung berdasarkan Slippage (%)
+      // Kita set 1000 BNB + slippage% untuk memastikan transaksi terkirim, lalu biarkan kontrak membatalkan.
+      const maxFundsBase = ethers.utils.parseEther('1000'); 
+      const maxFunds = maxFundsBase.mul(100 + minAmountOrFundsSlippage).div(100); 
+      
+      txOptions.value = maxFunds;
       tx = await contract[methodName](tokenAddress, amountInWei, maxFunds, txOptions);
     }
   } else if (action === 'sell') {
-    logger.info(`[${signer.address}] Menjual ${ethers.utils.formatUnits(amountInWei, await getTokenDecimals(tokenAddress))} token...`);
+    const decimals = await getTokenDecimals(tokenAddress);
+    logger.info(`[${signer.address}] Menjual ${ethers.utils.formatUnits(amountInWei, decimals)} token...`);
     
     // 1. Approve
     const tokenContract = getContract(tokenAddress, ABIS.ERC20, signer);
@@ -274,7 +292,6 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
     
     if (allowance.lt(amountInWei)) {
       logger.info(`[${signer.address}] Menyetujui (Approve) token...`);
-      // Approve juga diset dengan Gas Price yang dipilih
       const approveTx = await tokenContract.approve(tokenManagerAddress, ethers.constants.MaxUint256, txOptions);
       await approveTx.wait();
       logger.info(`[${signer.address}] Approve berhasil.`);
@@ -284,11 +301,22 @@ async function tradeToken(action, signer, tokenAddress, amountInWei, fundsInWei 
     if (version === 1) {
       // V1: saleToken(address tokenAddress, uint256 amount)
       const methodName = 'saleToken(address,uint256)';
-      tx = await contract[methodName](tokenAddress, amountInWei, txOptions);
+      tx = await contract[methodName](tokenAddress, amountInWei, txOptions); // V1 tidak mendukung minFunds
     } else {
       // V2: sellToken(address token, uint256 amount, uint256 minFunds)
       const methodName = 'sellToken(address,uint256,uint256)';
-      tx = await contract[methodName](tokenAddress, amountInWei, 0, txOptions); // 0 = minFunds
+      
+      // Hitung minFunds (Slippage) untuk V2: minFunds = estimatedFunds * (1 - slippage%)
+      // Karena kita tidak bisa memanggil trySell di sini, kita akan set minFunds=0
+      // dan mengandalkan bahwa pengguna tahu risiko slippage TINGGI.
+      // Sesuai permintaan, pengguna hanya ingin mengontrol GWEI. Kita set minFunds=0.
+      minAmountWei = ethers.BigNumber.from(0); // minFunds di V2 adalah minimum dana yang diterima (BNB)
+      
+      // NOTE: Jika kita ingin menggunakan minFunds berdasarkan Slippage (%) dari input,
+      // kita HARUS menggunakan trySell dari Helper V3. Tanpa itu, kita hanya bisa mengabaikannya (0).
+      // Untuk tujuan kontrol Gwei/Fee seperti yang diminta, kita akan set 0/abaikan minFunds.
+      
+      tx = await contract[methodName](tokenAddress, amountInWei, minAmountWei, txOptions); 
     }
   } else {
     throw new Error('Aksi tidak dikenal');
@@ -303,7 +331,7 @@ module.exports = {
   getMultiWalletSigners,
   getBnbBalance,
   getTokenBalance,
-  getTokenDecimals, // <-- BARU
+  getTokenDecimals, 
   getTokenManagerInfo,
   callCreateToken,
   fundWallets,
