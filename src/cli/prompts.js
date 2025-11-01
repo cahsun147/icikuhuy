@@ -1,4 +1,4 @@
-// src/cli/prompts.js (Versi 5.2 - Final Fix)
+// src/cli/prompts.js (Versi 5.3 - Tambah Opsi Kembali di Input)
 const inquirer = require('inquirer');
 const { LABELS } = require('../utils/config');
 
@@ -127,7 +127,11 @@ const bundleBuyPrompt = () => {
       type: 'input',
       name: 'buyAmountEth',
       message: 'Jumlah BNB (e.g., "0.01") yang akan digunakan oleh SETIAP multi-wallet untuk membeli:',
-      validate: input => (parseFloat(input) > 0) ? true : 'Jumlah harus angka desimal lebih besar dari 0',
+      validate: input => {
+        if (input.toLowerCase() === 'back') return true; // Izinkan "back"
+        return (parseFloat(input) > 0) ? true : 'Jumlah harus angka desimal lebih besar dari 0';
+      },
+      filter: (input) => input.toLowerCase() === 'back' ? 'back' : input,
     }
   ]);
 };
@@ -138,7 +142,11 @@ const generateWalletPrompts = () => {
       type: 'input',
       name: 'count',
       message: 'Jumlah dompet baru yang akan dibuat:',
-      validate: input => (parseInt(input, 10) > 0) ? true : 'Jumlah harus angka lebih besar dari 0',
+      validate: input => {
+        if (input.toLowerCase() === 'back') return true; // Izinkan "back"
+        return (parseInt(input, 10) > 0) ? true : 'Jumlah harus angka lebih besar dari 0';
+      },
+      filter: (input) => input.toLowerCase() === 'back' ? 'back' : input,
     },
   ]);
 };
@@ -152,7 +160,11 @@ const fundWalletsPrompts = () => {
       type: 'input',
       name: 'amount',
       message: message,
-      validate: input => (parseFloat(input) > 0) ? true : 'Jumlah harus angka desimal lebih besar dari 0',
+      validate: input => {
+        if (input.toLowerCase() === 'back') return true; // Izinkan "back"
+        return (parseFloat(input) > 0) ? true : 'Jumlah harus angka desimal lebih besar dari 0';
+      },
+      filter: (input) => input.toLowerCase() === 'back' ? 'back' : input,
     },
   ]);
 };
@@ -167,6 +179,10 @@ const walletChoicePrompt = (action) => {
       // Menambahkan opsi "Semua Wallet" untuk Sell dan Buy
       choices.unshift({ name: 'Semua Wallet (Main lalu Multi)', value: 'all' });
     }
+
+    choices.push(new inquirer.Separator());
+    choices.push({ name: 'Kembali ke Menu Utama', value: 'back' });
+
 
   return inquirer.prompt([
     {
@@ -187,7 +203,11 @@ const tradeTokenAddressPrompt = () => {
       type: 'input',
       name: 'tokenAddress',
       message: 'Masukkan Contract Address (CA) token:',
-      validate: input => /^0x[a-fA-F0-9]{40}$/.test(input) ? true : 'Alamat kontrak tidak valid',
+      validate: input => {
+        if (input.toLowerCase() === 'back') return true; // Izinkan "back"
+        return /^0x[a-fA-F0-9]{40}$/.test(input) ? true : 'Alamat kontrak tidak valid';
+      },
+      filter: (input) => input.toLowerCase() === 'back' ? 'back' : input,
     },
   ]);
 };
@@ -199,7 +219,11 @@ const buyAmountPrompt = () => {
       type: 'input',
       name: 'amount',
       message: 'Jumlah BNB (e.g., "0.01") yang akan digunakan oleh SETIAP dompet untuk membeli:',
-      validate: input => (parseFloat(input) > 0) ? true : 'Jumlah harus angka desimal lebih besar dari 0',
+      validate: input => {
+        if (input.toLowerCase() === 'back') return true; // Izinkan "back"
+        return (parseFloat(input) > 0) ? true : 'Jumlah harus angka desimal lebih besar dari 0';
+      },
+      filter: (input) => input.toLowerCase() === 'back' ? 'back' : input,
     }
   ]);
 };
@@ -220,6 +244,7 @@ const sellAmountPrompt = (totalBalanceDisplay, symbol) => {
         { name: '100% dari Saldo', value: '100' },
         new inquirer.Separator(),
         { name: 'Jumlah Custom (e.g., 245000 atau 245k)', value: 'custom' },
+        { name: 'Kembali ke Menu Utama', value: 'back' },
       ],
     },
     {
@@ -228,7 +253,6 @@ const sellAmountPrompt = (totalBalanceDisplay, symbol) => {
       message: 'Masukkan jumlah token yang akan dijual (e.g., 245000, 245k):',
       when: (answers) => answers.amountChoice === 'custom',
       validate: (input) => {
-        // Logika validasi untuk angka atau format 'k'
         const normalized = input.replace(/,/g, '');
         let value = parseFloat(normalized);
 
@@ -239,7 +263,6 @@ const sellAmountPrompt = (totalBalanceDisplay, symbol) => {
         return (value > 0 && !isNaN(value)) ? true : 'Jumlah custom tidak valid atau kurang dari 0';
       },
       filter: (input) => {
-        // Ubah 'k' menjadi angka penuh
         const normalized = input.replace(/,/g, '');
         if (normalized.toLowerCase().endsWith('k')) {
           return parseFloat(normalized.slice(0, -1)) * 1000;
@@ -262,16 +285,22 @@ const tradeOptionsPrompt = (action) => {
             name: 'gwei',
             message: `Custom Gas Price (Gwei): (Default: ${defaultGwei} Gwei)`,
             default: defaultGwei,
-            validate: input => (parseFloat(input) > 0 && parseFloat(input) <= 200) ? true : 'Gwei harus antara 0.11 dan 200',
-            filter: input => parseFloat(input).toFixed(2),
+            validate: input => {
+                if (input.toLowerCase() === 'back') return true; // Izinkan "back"
+                return (parseFloat(input) > 0 && parseFloat(input) <= 200) ? true : 'Gwei harus antara 0.11 dan 200';
+            },
+            filter: input => input.toLowerCase() === 'back' ? 'back' : parseFloat(input).toFixed(2),
         },
         {
             type: 'input',
             name: 'slippage',
             message: `Minimum Funds/Token (Slippage %) untuk ${action.toUpperCase()}: (Default: ${defaultSlippage}%)`,
             default: defaultSlippage,
-            validate: input => (parseFloat(input) >= 0 && parseFloat(input) <= 50) ? true : 'Slippage harus antara 0% dan 50%',
-            filter: input => parseFloat(input).toFixed(2),
+            validate: input => {
+                if (input.toLowerCase() === 'back') return true; // Izinkan "back"
+                return (parseFloat(input) >= 0 && parseFloat(input) <= 50) ? true : 'Slippage harus antara 0% dan 50%';
+            },
+            filter: input => input.toLowerCase() === 'back' ? 'back' : parseFloat(input).toFixed(2),
         },
     ]);
 };

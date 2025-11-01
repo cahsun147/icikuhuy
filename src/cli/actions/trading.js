@@ -1,4 +1,4 @@
-// src/cli/actions/trading.js (Versi 3.4)
+// src/cli/actions/trading.js (Versi 3.5 - Tambah Opsi Kembali)
 const { ethers } = require('ethers');
 const blockchain = require('../../services/blockchain');
 const prompts = require('../prompts');
@@ -7,7 +7,7 @@ const { ABIS, CONTRACT_ADDRESSES } = require('../../utils/config');
 const { loadMultiWallets } = require('../../services/wallet');
 
 // Versi skrip saat ini (dibuat untuk pelacakan)
-const SCRIPT_VERSION = '3.4'; 
+const SCRIPT_VERSION = '3.5'; 
 
 let volumeBotInterval = null;
 let snipeListener = null;
@@ -21,9 +21,15 @@ async function handleTrade(action, isTestMode = false) {
   
   // 1. Tanya dompet mana
   const { walletChoice } = await prompts.walletChoicePrompt(action);
+  // Cek apakah pengguna memilih kembali di prompt walletChoice
+  if (walletChoice === 'back') return;
   
   // 2. Tanya token address
-  const { tokenAddress } = await prompts.tradeTokenAddressPrompt();
+  const addressPromptResult = await prompts.tradeTokenAddressPrompt();
+  const tokenAddress = addressPromptResult.tokenAddress;
+  // Cek apakah pengguna memilih kembali di prompt tokenAddress
+  if (tokenAddress === 'back') return;
+
 
   let signers = [];
   let mainSigner = await blockchain.getMainWalletSigner();
@@ -50,6 +56,7 @@ async function handleTrade(action, isTestMode = false) {
   let amountDisplay = "";
   let decimals = 18; // Default
   let sellPromptResult = {};
+  let buyPromptResult = {};
 
   if (action === 'sell') {
     // a. Dapatkan desimal & saldo total untuk semua signers
@@ -74,6 +81,8 @@ async function handleTrade(action, isTestMode = false) {
     // b. Tanya jumlah/persentase sell
     sellPromptResult = await prompts.sellAmountPrompt(totalBalanceDisplay, await getContractSymbol(tokenAddress));
     const { amountChoice, customAmount } = sellPromptResult;
+    
+    if (amountChoice === 'back') return; // Tambah penanganan "Kembali"
     
     let sellAmountBase;
     
@@ -107,13 +116,18 @@ async function handleTrade(action, isTestMode = false) {
     amountDisplay = `${ethers.utils.formatUnits(amountInWei, decimals)} Token`;
 
   } else if (action === 'buy') {
-    const { amount } = await prompts.buyAmountPrompt();
+    buyPromptResult = await prompts.buyAmountPrompt();
+    const { amount } = buyPromptResult;
+    
+    if (amount === 'back') return; // Tambah penanganan "Kembali"
+
     fundsInWei = ethers.utils.parseEther(amount); 
     amountDisplay = `${amount} BNB`;
   }
   
   // 4. Tanya opsi trade (Gwei dan Slippage)
   const tradeOptions = await prompts.tradeOptionsPrompt(action);
+  if (tradeOptions.gwei === 'back' || tradeOptions.slippage === 'back') return; // Tambah penanganan "Kembali"
 
   // 5. Konfirmasi
   logger.info(`\n--- KONFIRMASI ${action.toUpperCase()} ---`);
@@ -145,8 +159,11 @@ async function handleTrade(action, isTestMode = false) {
     if (action === 'sell') {
       const currentBalance = await blockchain.getTokenBalance(tokenAddress, signer.address);
       
+      // Gunakan amountChoice dari hasil prompt sell
+      const amountChoiceForAllocation = sellPromptResult.amountChoice; 
+
       // Jika 100%, jual saldo dompet itu sendiri
-      if (sellPromptResult.amountChoice === '100') {
+      if (amountChoiceForAllocation === '100') {
         individualAmountInWei = currentBalance;
       } else {
         // Jika persentase/custom, bagi rata ke setiap dompet

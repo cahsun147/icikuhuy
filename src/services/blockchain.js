@@ -1,4 +1,4 @@
-// src/services/blockchain.js (Versi 5.6 - Fix Gas Otomatis & Error Reporting)
+// src/services/blockchain.js (Versi 5.7 - Final Fix Transfer & Refund)
 const { ethers } = require('ethers');
 const { CONTRACT_ADDRESSES, ABIS, RPC_MAINNET_URL, RPC_TESTNET_URL } = require('../utils/config');
 const logger = require('../utils/logger');
@@ -218,17 +218,20 @@ async function fundWallets(mainSigner, multiWalletAddresses, amountInEth, isTest
   const amountInWei = ethers.utils.parseEther(amountInEth);
   
   // Mengirim semua transaksi secara paralel dengan pelaporan status
-  const promises = multiWalletAddresses.map((address) => {
-    return mainSigner.sendTransaction({
-      to: address,
-      value: amountInWei,
-      // Hapus gasPrice/gasLimit untuk membiarkan Ethers/Provider menentukan yang optimal
-    })
-    .then(tx => tx.wait())
-    .then(receipt => ({ status: 'fulfilled', address, txHash: receipt.transactionHash }))
+  const promises = multiWalletAddresses.map(address => {
+    return (async () => {
+        // Gunakan Gas Price otomatis (tidak disetel manual) untuk fix REPLACEMENT_UNDERPRICED
+        const tx = await mainSigner.sendTransaction({
+            to: address,
+            value: amountInWei,
+            // Hapus gasPrice/gasLimit untuk membiarkan Ethers/Provider menentukan yang optimal
+        });
+        const receipt = await tx.wait();
+        return { address, txHash: receipt.transactionHash };
+    })()
     .catch(error => ({ 
         status: 'rejected', 
-        address, 
+        address, // Sertakan alamat untuk pelaporan error
         error: error.reason || (error.error && error.error.message) || String(error) 
     }));
   });
@@ -237,7 +240,9 @@ async function fundWallets(mainSigner, multiWalletAddresses, amountInEth, isTest
   
   // Pelaporan status
   results.forEach((result, index) => {
-      const address = result.value ? result.value.address : (result.reason ? result.reason.address : `0x...`);
+      // Ambil alamat dari data yang dikirim oleh promise (baik fulfilled maupun rejected)
+      const data = result.status === 'fulfilled' ? result.value : result.reason;
+      const address = data.address;
       const addressShort = address ? `${address.substring(0, 8)}...${address.substring(address.length - 4)}` : `Wallet ${index + 1}`;
       
       if (result.status === 'fulfilled') {
@@ -276,7 +281,7 @@ async function refundWallets(multiSigners, mainWalletAddress, isTestMode = false
         const valueToSend = balance.sub(gasCost);
 
         if (valueToSend.lte(0)) {
-            return { status: 'fulfilled', address: signer.address, message: 'Saldo tidak cukup untuk gas.' };
+            return { address: signer.address, message: 'Saldo tidak cukup untuk gas.' };
         }
         
         logger.info(`[${signer.address}] Mengirim ${ethers.utils.formatEther(valueToSend)} BNB...`);
@@ -286,14 +291,10 @@ async function refundWallets(multiSigners, mainWalletAddress, isTestMode = false
             value: valueToSend,
             // Hapus gasPrice/gasLimit untuk membiarkan Ethers/Provider menentukan yang optimal
         });
-        return tx.wait()
-            .then(receipt => ({ status: 'fulfilled', address: signer.address, txHash: receipt.transactionHash }))
-            .catch(error => ({ 
-                status: 'rejected', 
-                address: signer.address, 
-                error: error.reason || (error.error && error.error.message) || String(error) 
-            }));
+        const receipt = await tx.wait();
+        return { address: signer.address, txHash: receipt.transactionHash };
     })()
+    .then(result => ({ status: 'fulfilled', value: result })) // Wrap hasil sukses
     .catch(error => ({ 
         status: 'rejected', 
         address: signer.address, 
@@ -301,11 +302,13 @@ async function refundWallets(multiSigners, mainWalletAddress, isTestMode = false
     }));
   });
 
-  const results = await Promise.allSettled(promises);
+  // Karena kita sudah menangani reject di dalam promise.map, kita hanya perlu resolve di sini
+  const results = await Promise.all(promises); 
   
   // Pelaporan status
   results.forEach((result, index) => {
-      const address = result.value ? result.value.address : (result.reason ? result.reason.address : `0x...`);
+      const data = result.status === 'fulfilled' ? result.value : result.reason;
+      const address = data.address;
       const addressShort = address ? `${address.substring(0, 8)}...${address.substring(address.length - 4)}` : `Wallet ${index + 1}`;
       
       if (result.status === 'fulfilled' && result.value) {

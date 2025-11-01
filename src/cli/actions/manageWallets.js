@@ -1,4 +1,4 @@
-// src/cli/actions/manageWallets.js (Versi 3.2 - Detail Log Final)
+// src/cli/actions/manageWallets.js (Versi 3.3 - Tambah Opsi Kembali & Clean Logika)
 const blockchain = require('../../services/blockchain');
 const wallet = require('../../services/wallet');
 const prompts = require('../prompts');
@@ -8,6 +8,8 @@ const { ethers } = require('ethers');
 
 async function handleGenerateWallets() {
   const { count } = await prompts.generateWalletPrompts();
+  if (count === 'back') return; // Tambah penanganan "Kembali"
+
   const provider = blockchain.getProvider();
   await wallet.generateWallets(parseInt(count, 10), provider);
   logger.success(`${count} dompet baru telah dibuat dan disimpan.`);
@@ -16,6 +18,8 @@ async function handleGenerateWallets() {
 // Fungsi disederhanakan, sekarang menerima isTestMode
 async function handleFundWallets(isTestMode = false) {
   const { amount } = await prompts.fundWalletsPrompts(); // 'amount' adalah float string
+  if (amount === 'back') return; // Tambah penanganan "Kembali"
+
   const mainSigner = await blockchain.getMainWalletSigner();
   const multiWallets = await wallet.loadMultiWallets(blockchain.getProvider());
   
@@ -71,7 +75,6 @@ async function handleRefundWallets(isTestMode = false) {
     await blockchain.refundWallets(multiSigners, mainSigner.address, isTestMode);
     // Pesan Sukses dicetak di blockchain.js, hanya perlu menangkap error high level di sini
   } catch (e) {
-    // Menangkap pesan error dari throw di blockchain.js
     logger.error(`Gagal mengembalikan dana: ${e.message}`);
   }
 }
